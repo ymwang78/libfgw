@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="src">
+      <UniqueIdentifier>{c1d2e3f4-5a6b-7890-abcd-ef1234567890}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="protocol">
+      <UniqueIdentifier>{d2e3f4a5-6b7c-8901-bcde-f12345678901}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\zfgw.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_channel.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_channel_manager.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_datastream.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_inc.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_inport.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_outport.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_pack.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_proto.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_segment.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\zfgw_vm.h">
+      <Filter>src</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\zfgw.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_channel.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_channel_manager.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_datastream.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_inport.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_outport.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_pack.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_segment.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\zfgw_vm.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\zfgw.bat">
+      <Filter>protocol</Filter>
+    </None>
+    <None Include="src\zfgw.ptl">
+      <Filter>protocol</Filter>
+    </None>
+  </ItemGroup>
+</Project>

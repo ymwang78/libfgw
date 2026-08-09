@@ -1,0 +1,102 @@
+namespace zfgw
+{
+    /* ------------------------------------------------------------------ */
+    /*  Endpoint / Channel descriptors                                    */
+    /* ------------------------------------------------------------------ */
+
+    struct FgwEndpoint {
+        astring host              /* IPv4/IPv6 literal or DNS name */;
+        uint16  port              /* TCP or UDP port */;
+    };
+
+    struct FgwChannelConfig {
+        uint32  channel_id        /* unique id inside a VM */;
+        byte    kind              /* 0 = TCP, 1 = UTP */;
+        FgwEndpoint  remote       /* remote endpoint to dial */;
+        uint32  priority = 100    /* larger = more preferred */;
+    };
+
+    /* ------------------------------------------------------------------ */
+    /*  Top-level project configuration (persisted)                       */
+    /* ------------------------------------------------------------------ */
+
+    struct FgwConfig {
+        byte    role                          /* 0 = inport (client), 1 = outport (server) */;
+        uint32  ingress_id = 0                /* unique Inport id on shared multipath links */;
+        uint16  inport_listen_port = 1080     /* SOCKS5 local listen port on Inport */;
+        astring outport_listen_host           /* listen ip for Outport side */;
+        uint16  outport_listen_port = 0       /* listen port for Outport side */;
+        astring egress_bind_ip                /* fixed egress ip on Outport side */;
+        FgwChannelConfig channels[~]          /* pre-configured channels */;
+        uint16  segment_size = 1200           /* payload size per segment */;
+        uint16  recv_window = 1024            /* receive window size (segments) */;
+        uint16  heartbeat_interval = 5        /* seconds */;
+        uint16  link_timeout = 15             /* seconds */;
+        uint16  reconnect_max = 60            /* seconds */;
+        byte    multipath_mode = 2            /* 0 = best, 1 = all, 2 = weighted */;
+        byte    enable_crc = 1                /* bool */;
+    };
+
+    /* ------------------------------------------------------------------ */
+    /*  Runtime status (RPC response)                                     */
+    /* ------------------------------------------------------------------ */
+
+    struct FgwLinkQuality {
+        uint32  channel_id;
+        byte    connected          /* bool */;
+        uint32  rtt_ms;
+        double  loss_rate          /* 0.0 ~ 1.0 */;
+        uint64  bytes_sent;
+        uint64  bytes_recv;
+        uint32  send_segments;
+        uint32  recv_segments;
+        uint32  rexmit_segments;
+    };
+
+    struct FgwSessionStat {
+        uint32  session_id;
+        uint32  ingress_id = 0   /* Inport id (client side) for this session */;
+        astring client_addr        /* client IP:Port */;
+        astring target_addr        /* SOCKS5 target (on outport only) */;
+        uint64  bytes_sent;
+        uint64  bytes_recv;
+        uint32  open_timestamp     /* seconds since epoch */;
+    };
+
+    struct FgwStatus {
+        byte    running              /* bool */;
+        byte    role                 /* mirror of config.role */;
+        uint32  session_count;
+        FgwLinkQuality links[~];
+        FgwSessionStat  sessions[~];
+    };
+
+    /* ------------------------------------------------------------------ */
+    /*  RPC request / response helper structs                             */
+    /* ------------------------------------------------------------------ */
+
+    struct FgwEmpty {
+        byte _placeholder = 0;
+    };
+
+    struct FgwStartRequest {
+        byte force_restart = 0      /* bool */;
+    };
+
+    struct FgwStartResult {
+        int32  errcode;
+        astring message;
+    };
+
+    struct FgwAddChannelRequest {
+        FgwChannelConfig channel;
+    };
+
+    struct FgwRemoveChannelRequest {
+        uint32 channel_id;
+    };
+
+    struct FgwSetConfigRequest {
+        FgwConfig config;
+    };
+}
