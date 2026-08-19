@@ -5,6 +5,8 @@
 // ***************************************************************
 #include "zfgw_channel_manager.h"
 #include "zfgw_datastream.h"
+#include "zfgw_segment.h"
+#include "zfgw_pack.h"
 #include "zfgw.h"
 #include <zce/zce_log.h>
 #include <zce/zce_task_queue.h>
@@ -187,6 +189,7 @@ int ChannelManager::start(const FgwConfig& cfg) {
 }
 
 void ChannelManager::stop() {
+    stopLinkListener();
     zce::Guard<zce::Mutex> g(lock_);
     if (heartbeat_timer_) {
         heartbeat_timer_->cancel();
@@ -201,6 +204,88 @@ void ChannelManager::stop() {
         shared_utp_->stop();
         shared_utp_ = nullptr;
     }
+}
+
+// ─── Inbound link listener (Transit / Outport accept side) ───────────────────
+int ChannelManager::startLinkListener(const std::string& bind_ip, zce_uint16 bind_port) {
+    {
+        zce::Guard<zce::Mutex> g(lock_);
+        if (link_acceptor_) return ZFGW_ERRCODE_BUSY;
+    }
+
+    // The factory runs in the reactor thread for each accepted connection.
+    zce::SmartPtr<zce::Acceptor> acc(new zce::Acceptor(reactor_, [this]() -> zce::Tcp* {
+        zce::SmartPtr<IFgwChannel> chan = makeAcceptedChannel();
+        if (!chan) return nullptr;
+        return static_cast<FgwTcpChannel*>(chan.get())->createAcceptedHandler();
+    }));
+
+    int ret = acc->listen(bind_ip.empty() ? "0.0.0.0" : bind_ip.c_str(), bind_port);
+    if (ret < 0) {
+        ZCE_ERROR((ZLOG_ERROR, "fgw: link listener %s:%u failed 0x%x",
+                   bind_ip.c_str(), (unsigned)bind_port, ret));
+        return ZFGW_ERRCODE_LISTENFAIL;
+    }
+
+    zce::Guard<zce::Mutex> g(lock_);
+    link_acceptor_ = acc;
+    ZCE_DEBUG((ZLOG_INFOR, "fgw: link listener up on %s:%u",
+               bind_ip.empty() ? "0.0.0.0" : bind_ip.c_str(), (unsigned)bind_port));
+    return 0;
+}
+
+void ChannelManager::stopLinkListener() {
+    zce::SmartPtr<zce::Acceptor> acc;
+    {
+        zce::Guard<zce::Mutex> g(lock_);
+        acc.swap(link_acceptor_);
+    }
+    if (acc) acc->close();
+}
+
+zce::SmartPtr<IFgwChannel> ChannelManager::makeAcceptedChannel() {
+    zce::Guard<zce::Mutex> g(lock_);
+    zce_uint32 id = accepted_id_seq_++;
+    zce::SmartPtr<IFgwChannel> chan(new FgwTcpChannel(reactor_, id, /*priority*/ 100));
+    chan->markAccepted();
+    chan->setConnectedCallback([this](IFgwChannel* ch, int errcode) {
+        onChannelConnected(ch, errcode);
+    });
+    chan->setClosedCallback([this](IFgwChannel* ch) {
+        onChannelClosed(ch);
+    });
+    wireChannelRecv(chan.get());
+    channels_[id] = chan;
+    return chan;
+}
+
+void ChannelManager::sendHello(IFgwChannel* ch) {
+    if (!ch) return;
+    FgwHello hello;
+    hello.proto_version = 2;
+    hello.role       = config_.role;
+    hello.ingress_id = config_.ingress_id;
+    hello.outport_id = 0;  // per-segment routing carries the egress selector
+    hello.channel_id = ch->channelId();
+
+    zce_byte payload[64];
+    int plen = zce::zdp::zds_pack(payload, (int)sizeof(payload), hello, nullptr, true);
+    if (plen < 0) {
+        ZCE_ERROR((ZLOG_WARNI, "fgw: hello pack failed on channel %u", ch->channelId()));
+        return;
+    }
+
+    FgwSegmentHeader hdr;
+    hdr.flags       = FgwSegmentHeader::FLAG_HELLO;
+    hdr.payload_len = (zce_uint16)plen;
+    hdr.session_id  = 0;
+    hdr.seq_num     = 0;
+    hdr.ingress_id  = config_.ingress_id;
+
+    zce_byte frame[128];
+    int wrote = fgwSegmentEncode(frame, (int)sizeof(frame), hdr, payload, plen);
+    if (wrote < 0) return;
+    ch->sendBytes(frame, (zce_uint32)wrote);
 }
 
 int ChannelManager::addChannel(const FgwChannelConfig& cfg) {
@@ -333,6 +418,9 @@ void ChannelManager::onChannelConnected(IFgwChannel* ch, int errcode) {
     if (errcode >= 0) {
         ZCE_DEBUG((ZLOG_TRACE, "fgw: channel %u connected", ch->channelId()));
         if (on_opened_) on_opened_(this, ch);
+        // The dialing side announces itself first; accepted channels wait for
+        // the peer's Hello instead of sending their own.
+        if (!ch->isAccepted()) sendHello(ch);
     } else {
         ZCE_ERROR((ZLOG_ERROR, "fgw: channel %u connect failed 0x%x", ch->channelId(), errcode));
     }
@@ -343,6 +431,17 @@ void ChannelManager::onChannelClosed(IFgwChannel* ch) {
     if (on_closed_) on_closed_(this, ch);
 
     zce_uint32 id = ch->channelId();
+
+    // Accepted (inbound) channels are never redialed — the remote peer will
+    // reconnect. Remove them, but defer to the next loop turn so we do not
+    // free the channel while still unwinding its own on_close callback.
+    if (ch->isAccepted()) {
+        zce::SmartPtr<ChannelManager> self(this);
+        reactor_->scheduleTimer(zce::SmartPtr<zce::TaskQueue>(sync_queue_), 1, false,
+                                [self, id](zce::Timer*) { self->removeChannel(id); });
+        return;
+    }
+
     FgwEndpoint remote{};
     zce_uint32  kind = ZFGW_CHANNEL_TCP, priority = 100;
     {

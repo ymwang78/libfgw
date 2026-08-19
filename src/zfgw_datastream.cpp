@@ -4,6 +4,7 @@
 //  Copyright (C) 2026 - All Rights Reserved
 // ***************************************************************
 #include "zfgw_datastream.h"
+#include "zfgw_pack.h"
 #include "zfgw.h"
 #include <zce/zce_log.h>
 #include <zce/zce_mbpool.h>
@@ -158,6 +159,25 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         }
         ch->noteSegmentRecv();
 
+        // Per-link handshake: learn the peer's identity for this channel and
+        // stop. Hello is not a session segment and must bypass dedup (all of a
+        // peer's channels share ingress/session/seq = X/0/0 and would collide).
+        if (hdr.isHello()) {
+            FgwHello hello;
+            if (zce::zdp::zds_unpack(hello, frame + hr, (int)hdr.payload_len,
+                                     nullptr, true) >= 0) {
+                ch->setPeerIdentity(hello.channel_id, hello.ingress_id, hello.outport_id);
+                ZCE_DEBUG((ZLOG_TRACE,
+                           "fgw: channel %u hello peer(ch=%u ing=%u out=%u role=%u)",
+                           ch->channelId(), hello.channel_id, hello.ingress_id,
+                           hello.outport_id, (unsigned)hello.role));
+            } else {
+                ZCE_ERROR((ZLOG_WARNI, "fgw: channel %u bad hello payload", ch->channelId()));
+            }
+            pos += (size_t)total;
+            continue;
+        }
+
         const zce_uint32 rx_ingress = hdr.isHdrExt() ? hdr.ingress_id : 0;
         SessionKey skey(rx_ingress, hdr.session_id);
 
@@ -165,6 +185,7 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         dk.ingress = rx_ingress;
         dk.session = hdr.session_id;
         dk.seq     = hdr.seq_num;
+        dk.kind    = hdr.isSyn() ? 1 : (hdr.isFin() ? 2 : 0);
         if (dedup_map_.count(dk)) {
             pos += (size_t)total;
             continue;

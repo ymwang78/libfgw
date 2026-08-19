@@ -79,6 +79,17 @@ int ZfgwMachine::doBringup() {
             doTeardown();
             return ret;
         }
+        // Accept inbound multipath link connections from Inport/Transit peers.
+        // The listen endpoint reuses the (previously unused) outport_listen_*
+        // config fields; bytes from accepted links flow into stream_.
+        if (config_.outport_listen_port != 0) {
+            int lret = manager_->startLinkListener(config_.outport_listen_host,
+                                                   config_.outport_listen_port);
+            if (lret < 0) {
+                doTeardown();
+                return lret;
+            }
+        }
     } else {
         doTeardown();
         return ZFGW_ERRCODE_INVALIDROLE;

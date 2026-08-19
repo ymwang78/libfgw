@@ -1,4 +1,4 @@
-namespace zfgw
+﻿namespace zfgw
 {
     /* ------------------------------------------------------------------ */
     /*  Endpoint / Channel descriptors                                    */
@@ -12,7 +12,7 @@ namespace zfgw
     struct FgwChannelConfig {
         uint32  channel_id        /* unique id inside a VM */;
         byte    kind              /* 0 = TCP, 1 = UTP */;
-        FgwEndpoint  remote       /* remote endpoint to dial */;
+        struct FgwEndpoint  remote  /* remote endpoint to dial */;
         uint32  priority = 100    /* larger = more preferred */;
     };
 
@@ -27,7 +27,7 @@ namespace zfgw
         astring outport_listen_host           /* listen ip for Outport side */;
         uint16  outport_listen_port = 0       /* listen port for Outport side */;
         astring egress_bind_ip                /* fixed egress ip on Outport side */;
-        FgwChannelConfig channels[~]          /* pre-configured channels */;
+        struct FgwChannelConfig channels[~]   /* pre-configured channels */;
         uint16  segment_size = 1200           /* payload size per segment */;
         uint16  recv_window = 1024            /* receive window size (segments) */;
         uint16  heartbeat_interval = 5        /* seconds */;
@@ -67,8 +67,8 @@ namespace zfgw
         byte    running              /* bool */;
         byte    role                 /* mirror of config.role */;
         uint32  session_count;
-        FgwLinkQuality links[~];
-        FgwSessionStat  sessions[~];
+        struct FgwLinkQuality links[~];
+        struct FgwSessionStat  sessions[~];
     };
 
     /* ------------------------------------------------------------------ */
@@ -89,7 +89,7 @@ namespace zfgw
     };
 
     struct FgwAddChannelRequest {
-        FgwChannelConfig channel;
+        struct FgwChannelConfig channel;
     };
 
     struct FgwRemoveChannelRequest {
@@ -97,6 +97,30 @@ namespace zfgw
     };
 
     struct FgwSetConfigRequest {
-        FgwConfig config;
+        struct FgwConfig config;
+    };
+
+    /* ------------------------------------------------------------------ */
+    /*  Link-level handshake (per accepted link connection)               */
+    /* ------------------------------------------------------------------ */
+
+    /* First framed message the dialing side sends right after a link
+       connection is established, so the accepting side (Transit/Outport)
+       learns the peer identity and routing keys before any data flows. */
+    struct FgwHello {
+        uint16  proto_version = 2   /* wire protocol version */;
+        byte    role                /* sender role: 0=inport,1=outport,2=transit */;
+        uint32  ingress_id          /* sender ingress id (reverse-routing key) */;
+        uint32  outport_id          /* desired egress id (forward-routing key), 0 if N/A */;
+        uint32  channel_id          /* sender-local channel id */;
+    };
+
+    /* Receiver-arbitrated racing feedback, carried in a FLAG_ACK control
+       segment payload (Transit -> Inport). */
+    struct FgwLinkFeedback {
+        uint32  decision_epoch      /* monotonically increasing */;
+        uint32  recommended_primary /* recommended primary channel id */;
+        uint32  alive_bitmap        /* per-channel recent-liveness bitmap */;
+        uint32  highest_seq         /* highest contiguous seq received */;
     };
 }

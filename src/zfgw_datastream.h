@@ -104,10 +104,16 @@ class DataStream : public zce::Object {
         zce_uint32 ingress = 0;
         zce_uint32 session = 0;
         zce_uint32 seq     = 0;
+        /// Segment class: 0 = DATA, 1 = SYN, 2 = FIN. Keeps control markers in a
+        /// separate dedup space from DATA so that a SYN and the first DATA
+        /// segment (both legitimately seq 0) are not conflated — otherwise the
+        /// first payload segment is dropped as a false duplicate of the SYN.
+        zce_uint8  kind    = 0;
         bool operator<(const DedupKey& o) const {
             if (ingress != o.ingress) return ingress < o.ingress;
             if (session != o.session) return session < o.session;
-            return seq < o.seq;
+            if (seq != o.seq) return seq < o.seq;
+            return kind < o.kind;
         }
     };
 
