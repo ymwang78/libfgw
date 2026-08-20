@@ -82,7 +82,9 @@ class LinkSelector {
   private:
     ZFGW_MULTIPATH_MODE          mode_ = ZFGW_MULTIPATH_WEIGHTED;
     std::atomic<zce_uint32>      primary_channel_id_{0};
-    mutable size_t               probe_rotation_ = 0;
+    // Atomic: one LinkSelector is shared by the ChannelManager across every
+    // DataStream, whose per-stream locks do not serialize this shared counter.
+    mutable std::atomic<size_t>  probe_rotation_{0};
 };
 
 // ─── Channel manager ────────────────────────────────────────────────────────

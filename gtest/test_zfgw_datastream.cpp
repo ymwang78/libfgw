@@ -13,7 +13,9 @@
 
 #include <zce/zce_reactor.h>
 
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -200,6 +202,38 @@ TEST(FgwLinkSelectorTest, ExploreExploitDualSend) {
     auto s4 = sel.select(one);
     ASSERT_EQ(s4.size(), 1u);
     EXPECT_EQ(s4[0], 1u);
+}
+
+// Concurrent select() on a selector shared by multiple DataStreams must be a
+// data-race-free (the probe rotation counter is atomic). Every result must stay
+// well-formed and both alternate links must still get probed.
+TEST(FgwLinkSelectorTest, ConcurrentSelectIsThreadSafe) {
+    LinkSelector sel;
+    zce::SmartPtr<IFgwChannel> a(new MockChannel(1, 100));
+    zce::SmartPtr<IFgwChannel> b(new MockChannel(2, 80));
+    zce::SmartPtr<IFgwChannel> c(new MockChannel(3, 60));
+    static_cast<MockChannel*>(a.get())->setLive();
+    static_cast<MockChannel*>(b.get())->setLive();
+    static_cast<MockChannel*>(c.get())->setLive();
+    std::vector<FgwChannelPtr> pool{a, b, c};
+
+    std::atomic<int> saw2{0}, saw3{0}, bad{0};
+    auto worker = [&]() {
+        for (int i = 0; i < 5000; ++i) {
+            auto s = sel.select(pool);
+            if (s.size() != 2 || s[0] != 1u) { ++bad; continue; }
+            if (s[1] == 2u) ++saw2;
+            else if (s[1] == 3u) ++saw3;
+            else ++bad;
+        }
+    };
+    std::vector<std::thread> ts;
+    for (int t = 0; t < 4; ++t) ts.emplace_back(worker);
+    for (auto& t : ts) t.join();
+
+    EXPECT_EQ(bad.load(), 0);
+    EXPECT_GT(saw2.load(), 0);
+    EXPECT_GT(saw3.load(), 0);
 }
 
 // Heartbeat stall decision (pure logic). The receive clock is baselined at

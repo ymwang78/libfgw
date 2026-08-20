@@ -175,7 +175,7 @@ std::vector<zce_uint32> LinkSelector::select(const std::vector<FgwChannelPtr>& p
             // alternate link is exercised over time.
             if (ranked.size() > 1) {
                 const size_t others = ranked.size() - 1;
-                const size_t r = probe_rotation_++ % others;
+                const size_t r = probe_rotation_.fetch_add(1, std::memory_order_relaxed) % others;
                 const size_t idx = (r < primary_idx) ? r : r + 1;  // skip primary
                 out.push_back(ranked[idx].id);
             }
