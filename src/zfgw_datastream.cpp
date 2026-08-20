@@ -4,6 +4,7 @@
 //  Copyright (C) 2026 - All Rights Reserved
 // ***************************************************************
 #include "zfgw_datastream.h"
+#include "zfgw_pack.h"
 #include "zfgw.h"
 #include <zce/zce_log.h>
 #include <zce/zce_mbpool.h>
@@ -158,6 +159,32 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         }
         ch->noteSegmentRecv();
 
+        // Per-link handshake: learn the peer's identity for this channel and
+        // stop. Hello is not a session segment and must bypass dedup (all of a
+        // peer's channels share ingress/session/seq = X/0/0 and would collide).
+        if (hdr.isHello()) {
+            FgwHello hello;
+            if (zce::zdp::zds_unpack(hello, frame + hr, (int)hdr.payload_len,
+                                     nullptr, true) < 0) {
+                ZCE_ERROR((ZLOG_WARNI, "fgw: channel %u bad hello payload", ch->channelId()));
+            } else if (hello.proto_version != kFgwProtoVersion) {
+                // Incompatible peer: do not apply identity — the link cannot be
+                // trusted to speak our framing/routing. Leave it unidentified.
+                ZCE_ERROR((ZLOG_WARNI,
+                           "fgw: channel %u hello proto_version %u unsupported (want %u), ignoring",
+                           ch->channelId(), (unsigned)hello.proto_version,
+                           (unsigned)kFgwProtoVersion));
+            } else {
+                ch->setPeerIdentity(hello.channel_id, hello.ingress_id, hello.outport_id);
+                ZCE_DEBUG((ZLOG_TRACE,
+                           "fgw: channel %u hello peer(ch=%u ing=%u out=%u role=%u)",
+                           ch->channelId(), hello.channel_id, hello.ingress_id,
+                           hello.outport_id, (unsigned)hello.role));
+            }
+            pos += (size_t)total;
+            continue;
+        }
+
         const zce_uint32 rx_ingress = hdr.isHdrExt() ? hdr.ingress_id : 0;
         SessionKey skey(rx_ingress, hdr.session_id);
 
@@ -165,6 +192,7 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         dk.ingress = rx_ingress;
         dk.session = hdr.session_id;
         dk.seq     = hdr.seq_num;
+        dk.kind    = hdr.isSyn() ? 1 : (hdr.isFin() ? 2 : 0);
         if (dedup_map_.count(dk)) {
             pos += (size_t)total;
             continue;

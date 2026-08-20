@@ -42,6 +42,9 @@ struct FgwSegmentHeader {
         FLAG_DATA      = 0x04,
         FLAG_ACK       = 0x08,
         FLAG_HEARTBEAT = 0x10,
+        /// Per-link handshake: payload carries ZDS(FgwHello). Handled at the
+        /// channel/identity level, never as a session segment.
+        FLAG_HELLO     = 0x20,
         /// If set, header is 20 bytes and bytes 12–15 carry ingress_id.
         FLAG_HDR_EXT   = 0x80,
     };
@@ -55,6 +58,7 @@ struct FgwSegmentHeader {
     zce_uint32 crc32       = 0;
 
     bool isData() const      { return (flags & FLAG_DATA) != 0; }
+    bool isHello() const     { return (flags & FLAG_HELLO) != 0; }
     bool isHeartbeat() const { return (flags & FLAG_HEARTBEAT) != 0; }
     bool isFin() const       { return (flags & FLAG_FIN) != 0; }
     bool isSyn() const       { return (flags & FLAG_SYN) != 0; }

@@ -122,9 +122,21 @@ int FgwTcpChannel::sendBytes(const zce_byte* buf, zce_uint32 len) {
 
 int FgwTcpChannel::adoptAcceptedTcp(const zce::SmartPtr<zce::Tcp>& /*tcp_ptr*/) {
     // Accepted channels use a distinct TcpHandler path — the Acceptor
-    // constructs a TcpHandler directly via its factory lambda, so this
+    // constructs a TcpHandler directly via createAcceptedHandler(), so this
     // overload is reserved for future wrapping of pre-existing sockets.
     return ZFGW_ERRCODE_INVALIDCONFIG;
+}
+
+zce::Tcp* FgwTcpChannel::createAcceptedHandler() {
+    zce::Guard<zce::Mutex> g(lock_);
+    markAccepted();
+    // The TcpHandler forwards on_open/on_read_data/on_close into this owner
+    // exactly like the dial path; for an accepted socket zce::Acceptor drives
+    // on_open(passive=true), which marks the channel connected and starts the
+    // read loop. The Acceptor adopts ownership; we keep a SmartPtr too (the
+    // handler is refcounted), mirroring InportService's InportTcp pattern.
+    tcp_ptr_ = zce::SmartPtr<zce::Tcp>(new TcpHandler(reactor_, this));
+    return tcp_ptr_.get();
 }
 
 // ─── FgwUtpChannel ───────────────────────────────────────────────────────────

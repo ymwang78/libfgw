@@ -21,6 +21,16 @@
 #include "zfgw_proto.h"
 #include "zfgw.h"
 
+// Bridge the build-system option to the internal guard used throughout the
+// UTP code paths. CMake's FGW_ENABLE_UTP defines FGW_USE_LIBUTP=1; the sources
+// below are written against ZFGW_WITH_LIBUTP. Keep the two names in sync here
+// so enabling the option actually compiles the libutp integration in.
+#if defined(FGW_USE_LIBUTP) && (FGW_USE_LIBUTP)
+#    define ZFGW_WITH_LIBUTP 1
+#else
+#    define ZFGW_WITH_LIBUTP 0
+#endif
+
 struct struct_utp_context;
 struct UTPSocket;
 
@@ -61,6 +71,14 @@ class IFgwChannel : virtual public zce::Object {
     ZFGW_CHANNEL_KIND kind_ = ZFGW_CHANNEL_TCP;
     zce_uint32        priority_ = 100;
     bool              connected_ = false;
+    /// True for channels created by an inbound listener (accepted) rather
+    /// than dialed; accepted channels are not auto-reconnected and do not
+    /// send the initiating Hello (the dialing peer does).
+    bool              accepted_ = false;
+    /// Peer identity learned from the FgwHello handshake (0 until received).
+    zce_uint32        peer_channel_id_ = 0;
+    zce_uint32        peer_ingress_id_ = 0;
+    zce_uint32        peer_outport_id_ = 0;
     LinkQuality       quality_;
     mutable zce::Mutex quality_lock_;
 
@@ -78,6 +96,20 @@ class IFgwChannel : virtual public zce::Object {
     ZFGW_CHANNEL_KIND  kind()       const { return kind_; }
     zce_uint32         priority()   const { return priority_; }
     bool               isConnected() const { return connected_; }
+
+    bool               isAccepted() const { return accepted_; }
+    void               markAccepted()     { accepted_ = true; }
+
+    /// Peer identity, as reported in the FgwHello handshake.
+    zce_uint32         peerChannelId() const { return peer_channel_id_; }
+    zce_uint32         peerIngressId() const { return peer_ingress_id_; }
+    zce_uint32         peerOutportId() const { return peer_outport_id_; }
+    void setPeerIdentity(zce_uint32 peer_channel, zce_uint32 peer_ingress,
+                         zce_uint32 peer_outport) {
+        peer_channel_id_ = peer_channel;
+        peer_ingress_id_ = peer_ingress;
+        peer_outport_id_ = peer_outport;
+    }
 
     LinkQuality quality() const {
         zce::Guard<zce::Mutex> g(quality_lock_);
@@ -151,6 +183,12 @@ class FgwTcpChannel : public IFgwChannel {
     /// Wrap an already-accepted zce::Tcp (used by OutportService when a
     /// remote Inport dials in).
     int adoptAcceptedTcp(const zce::SmartPtr<zce::Tcp>& tcp_ptr);
+
+    /// Create the zce::Tcp handler for an inbound (accepted) channel and
+    /// return it for a zce::Acceptor factory to adopt. The channel keeps a
+    /// SmartPtr to the handler; bytes read on it flow through the normal
+    /// BytesCallback path. Marks the channel accepted.
+    zce::Tcp* createAcceptedHandler();
 
   private:
     class TcpHandler;  // zce::Tcp subclass that fans out bytes

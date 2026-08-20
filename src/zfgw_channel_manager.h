@@ -97,6 +97,12 @@ class ChannelManager : public zce::Object {
     int addChannel(const FgwChannelConfig& cfg);
     int removeChannel(zce_uint32 channel_id);
 
+    /// Start accepting inbound link connections (Transit / Outport side).
+    /// Each accepted socket becomes an inbound FgwTcpChannel whose bytes are
+    /// fanned out to the registered DataStream(s). Idempotent-guarded.
+    int  startLinkListener(const std::string& bind_ip, zce_uint16 bind_port);
+    void stopLinkListener();
+
     /// Get (or create) the shared UTP context bound to (bind_ip, bind_port).
     /// For clients we usually bind to the wildcard address with an
     /// ephemeral port.
@@ -125,12 +131,22 @@ class ChannelManager : public zce::Object {
     void scheduleReconnect(zce_uint32 channel_id, FgwEndpoint remote, zce_uint32 kind,
                            zce_uint32 priority, unsigned backoff_seconds);
 
+    /// Build an inbound (accepted) TCP channel, register it, and return it so
+    /// its handler can be handed to the zce::Acceptor factory.
+    zce::SmartPtr<IFgwChannel> makeAcceptedChannel();
+    /// Send the FgwHello handshake on a freshly-connected dialed channel.
+    void sendHello(IFgwChannel* ch);
+
     zce::SmartPtr<zce::Reactor>                    reactor_;
     zce::TaskQueue*                                sync_queue_ = nullptr;
     mutable zce::Mutex                             lock_;
     std::map<zce_uint32, FgwChannelPtr>            channels_;
     zce::SmartPtr<FgwUtpContextHolder>             shared_utp_;
     zce::SmartPtr<zce::Timer>                      heartbeat_timer_;
+    zce::SmartPtr<zce::Acceptor>                   link_acceptor_;
+    /// Id space for accepted channels (high bit set) so they never collide
+    /// with operator-configured (dialed) channel ids.
+    zce_uint32                                     accepted_id_seq_ = 0x80000000u;
     LinkSelector                                   selector_;
     FgwConfig                                      config_{};
 
