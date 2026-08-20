@@ -123,13 +123,16 @@ class IFgwChannel : virtual public zce::Object {
         return quality_.last_rx_tick;
     }
 
-    /// Heartbeat stall evaluation. Reads last_rx_tick AND writes stalled_ under
-    /// quality_lock_ — the same section addRecvBytes() uses — so a concurrent
-    /// receive cannot be lost to a stale-snapshot decision (timer reads an old
-    /// timestamp, recv clears the stall, timer overwrites it back to stalled).
-    void evaluateStall(zce_uint32 now_tick, zce_uint32 timeout_ms) {
+    /// Heartbeat stall evaluation. Samples the clock, reads last_rx_tick, and
+    /// writes stalled_ all under quality_lock_ — the same section addRecvBytes()
+    /// uses. Sampling `now` inside the lock (not by the caller before the loop)
+    /// guarantees now >= last_rx_tick: any addRecvBytes() that set a newer
+    /// timestamp has already released the lock, so the unsigned (now - last)
+    /// delta can never wrap and mis-stall a just-recovered link.
+    void evaluateStall(zce_uint32 timeout_ms) {
         zce::Guard<zce::Mutex> g(quality_lock_);
-        stalled_.store(fgwLinkStalled(now_tick, quality_.last_rx_tick, timeout_ms),
+        const zce_uint32 now = (zce_uint32)zce_tick();
+        stalled_.store(fgwLinkStalled(now, quality_.last_rx_tick, timeout_ms),
                        std::memory_order_relaxed);
     }
 

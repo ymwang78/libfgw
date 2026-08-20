@@ -327,15 +327,15 @@ void ChannelManager::onHeartbeatTick() {
         link_timeout_ms = (config_.link_timeout > 0 ? (unsigned)config_.link_timeout : 15) * 1000;
     }
 
-    const zce_uint32 now = (zce_uint32)zce_tick();
     for (auto& ch : chans) {
         if (!ch->isConnected()) continue;
         sendHeartbeat(ch.get());
-        // Stall detection: TCP still open but silent past link_timeout. The
-        // read-decide-write happens inside evaluateStall() under the receive
-        // lock, so a concurrent addRecvBytes() recovery can't be overwritten.
+        // Stall detection: TCP still open but silent past link_timeout. Sampling
+        // `now`, reading last_rx_tick, and writing stalled_ all happen inside
+        // evaluateStall() under the receive lock, so a concurrent addRecvBytes()
+        // recovery can neither be overwritten nor make the delta underflow.
         const bool was_stalled = ch->isStalled();
-        ch->evaluateStall(now, link_timeout_ms);
+        ch->evaluateStall(link_timeout_ms);
         if (ch->isStalled() != was_stalled) {
             ZCE_DEBUG((ZLOG_INFOR, "fgw: channel %u %s", ch->channelId(),
                        ch->isStalled() ? "STALLED (no rx)" : "recovered"));
