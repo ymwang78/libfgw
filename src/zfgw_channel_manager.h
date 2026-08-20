@@ -67,14 +67,22 @@ class LinkSelector {
 
     void setMode(ZFGW_MULTIPATH_MODE mode) { mode_ = mode; }
 
-    /// Returns the list of channel-ids (ordered by descending weight)
-    /// that should receive the next outgoing segment.  The caller
-    /// should transmit on each one in order, but may stop early when
-    /// it believes one copy is sufficient.
+    /// Set the primary (exploit) channel — normally the receiver-arbitrated
+    /// fastest link, fed back via FgwLinkFeedback (0 = fall back to best-weight).
+    void setPrimaryChannel(zce_uint32 id) { primary_channel_id_.store(id); }
+    zce_uint32 primaryChannel() const { return primary_channel_id_.load(); }
+
+    /// Returns the channel-ids that should carry the next outgoing segment.
+    /// In the default WEIGHTED (explore/exploit) mode this is the primary
+    /// (exploit) link plus one rotating probe (explore) — dual-send: a single
+    /// stalled link cannot block delivery, while the rotating probe keeps
+    /// searching for a faster path. BEST sends one copy; ALL floods every link.
     std::vector<zce_uint32> select(const std::vector<FgwChannelPtr>& pool) const;
 
   private:
-    ZFGW_MULTIPATH_MODE mode_ = ZFGW_MULTIPATH_WEIGHTED;
+    ZFGW_MULTIPATH_MODE          mode_ = ZFGW_MULTIPATH_WEIGHTED;
+    std::atomic<zce_uint32>      primary_channel_id_{0};
+    mutable size_t               probe_rotation_ = 0;
 };
 
 // ─── Channel manager ────────────────────────────────────────────────────────

@@ -25,10 +25,13 @@ using namespace zfgw;
 // its zce::Object refcount is never decremented to zero.
 class MockChannel : public IFgwChannel {
   public:
-    explicit MockChannel(zce_uint32 id) : IFgwChannel(id, ZFGW_CHANNEL_TCP, 100) {}
+    explicit MockChannel(zce_uint32 id, zce_uint32 prio = 100)
+        : IFgwChannel(id, ZFGW_CHANNEL_TCP, prio) {}
     int  connect(const FgwEndpoint&) override { return 0; }
     void close() override {}
     int  sendBytes(const zce_byte*, zce_uint32 len) override { return (int)len; }
+    /// Mark connected (and thus live) for selection tests.
+    void setLive() { markConnected(true); }
 };
 
 // Captures everything DataStream delivers for a session.
@@ -160,6 +163,43 @@ TEST(FgwDataStreamTest, DuplicateDataDeliveredOnce) {
     ds.onChannelBytes(&ch, data1.data(), (zce_uint32)data1.size());
 
     EXPECT_EQ(handler.bytes, "ABCD");
+}
+
+// LinkSelector explore/exploit: primary (exploit) + one rotating probe (explore).
+TEST(FgwLinkSelectorTest, ExploreExploitDualSend) {
+    LinkSelector sel;  // default WEIGHTED = explore/exploit
+
+    zce::SmartPtr<IFgwChannel> a(new MockChannel(1, 100));
+    zce::SmartPtr<IFgwChannel> b(new MockChannel(2, 80));
+    zce::SmartPtr<IFgwChannel> c(new MockChannel(3, 60));
+    static_cast<MockChannel*>(a.get())->setLive();
+    static_cast<MockChannel*>(b.get())->setLive();
+    static_cast<MockChannel*>(c.get())->setLive();
+    std::vector<FgwChannelPtr> pool{a, b, c};
+
+    // Default primary = best weight (ch 1); exactly two copies (primary + probe).
+    auto s1 = sel.select(pool);
+    ASSERT_EQ(s1.size(), 2u);
+    EXPECT_EQ(s1[0], 1u);
+    // Probe rotates across the non-primary links on successive calls.
+    auto s2 = sel.select(pool);
+    EXPECT_EQ(s2[0], 1u);
+    EXPECT_NE(s1[1], s2[1]);
+    EXPECT_NE(s1[1], 1u);
+    EXPECT_NE(s2[1], 1u);
+
+    // A fed-back recommendation overrides the primary.
+    sel.setPrimaryChannel(3);
+    auto s3 = sel.select(pool);
+    ASSERT_EQ(s3.size(), 2u);
+    EXPECT_EQ(s3[0], 3u);   // primary is now the fed-back link
+    EXPECT_NE(s3[1], 3u);   // probe is one of the others
+
+    // A single live link yields a single copy (no probe).
+    std::vector<FgwChannelPtr> one{a};
+    auto s4 = sel.select(one);
+    ASSERT_EQ(s4.size(), 1u);
+    EXPECT_EQ(s4[0], 1u);
 }
 
 // Heartbeat stall decision (pure logic). The receive clock is baselined at
