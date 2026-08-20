@@ -63,27 +63,59 @@ void TransitService::stop() {
 
 void TransitService::dialOutports() {
     for (const auto& ccfg : config_.channels) {
-        zce::SmartPtr<IFgwChannel> chan(new FgwTcpChannel(reactor_, ccfg.channel_id, ccfg.priority));
-        IFgwChannel* raw = chan.get();
-        chan->setBytesCallback([this](IFgwChannel* ch, const zce_byte* b, zce_uint32 n) {
-            onLinkBytes(ch, b, n);
-        });
-        chan->setClosedCallback([this](IFgwChannel* ch) { onLinkClosed(ch); });
-        {
-            zce::Guard<zce::Mutex> g(lock_);
-            Link L;
-            L.chan     = chan;
-            L.outbound = true;
-            links_[raw] = std::move(L);
-            // channel_id is the outport_id this link serves.
-            outbound_by_outport_[ccfg.channel_id] = chan;
-        }
-        int ret = chan->connect(ccfg.remote);
-        if (ret < 0) {
-            ZCE_ERROR((ZLOG_ERROR, "fgw transit: dial outport %u (%s:%u) failed 0x%x",
-                       ccfg.channel_id, ccfg.remote.host.c_str(), (unsigned)ccfg.remote.port, ret));
-        }
+        dialOneOutport(ccfg);
     }
+}
+
+void TransitService::dialOneOutport(const FgwChannelConfig& ccfg) {
+    zce::SmartPtr<IFgwChannel> chan(new FgwTcpChannel(reactor_, ccfg.channel_id, ccfg.priority));
+    IFgwChannel* raw = chan.get();
+    chan->setBytesCallback([this](IFgwChannel* ch, const zce_byte* b, zce_uint32 n) {
+        onLinkBytes(ch, b, n);
+    });
+    chan->setClosedCallback([this](IFgwChannel* ch) { onLinkClosed(ch); });
+    {
+        zce::Guard<zce::Mutex> g(lock_);
+        // Drop any stale channel we still hold for this outport_id (e.g. a prior
+        // dial that failed synchronously). Explicit close() does not fire the
+        // closed callback, so this cannot recurse into onLinkClosed().
+        auto oit = outbound_by_outport_.find(ccfg.channel_id);
+        if (oit != outbound_by_outport_.end() && oit->second) {
+            links_.erase(oit->second.get());
+        }
+        Link L;
+        L.chan     = chan;
+        L.outbound = true;
+        links_[raw] = std::move(L);
+        // channel_id is the outport_id this link serves.
+        outbound_by_outport_[ccfg.channel_id] = chan;
+    }
+    int ret = chan->connect(ccfg.remote);
+    if (ret < 0) {
+        ZCE_ERROR((ZLOG_ERROR, "fgw transit: dial outport %u (%s:%u) failed 0x%x, will retry",
+                   ccfg.channel_id, ccfg.remote.host.c_str(), (unsigned)ccfg.remote.port, ret));
+        scheduleOutportRedial(ccfg.channel_id);
+    }
+}
+
+void TransitService::scheduleOutportRedial(zce_uint32 outport_id) {
+    const unsigned backoff = config_.reconnect_max > 0 ? (unsigned)config_.reconnect_max : 30;
+    zce::SmartPtr<TransitService> self(this);
+    reactor_->scheduleTimer(zce::SmartPtr<zce::TaskQueue>(sync_queue_), (int)backoff * 1000, false,
+                            [self, outport_id](zce::Timer*) {
+        FgwChannelConfig cfg;
+        bool found = false;
+        {
+            zce::Guard<zce::Mutex> g(self->lock_);
+            for (const auto& c : self->config_.channels) {
+                if (c.channel_id == outport_id) { cfg = c; found = true; break; }
+            }
+        }
+        if (found) {
+            ZCE_DEBUG((ZLOG_INFOR, "fgw transit: re-dialing outport %u", outport_id));
+            self->dialOneOutport(cfg);
+        }
+    });
 }
 
 zce::SmartPtr<IFgwChannel> TransitService::makeInboundChannel() {
@@ -180,23 +212,40 @@ void TransitService::onLinkBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint3
 void TransitService::onLinkClosed(IFgwChannel* ch) {
     // Defer removal to the next loop turn so we do not free the channel while
     // still unwinding its own on_close callback.
-    zce_uint32 id = ch->channelId();
     zce::SmartPtr<TransitService> self(this);
     reactor_->scheduleTimer(zce::SmartPtr<zce::TaskQueue>(sync_queue_), 1, false,
-                            [self, ch, id](zce::Timer*) {
-        zce::Guard<zce::Mutex> g(self->lock_);
-        auto lit = self->links_.find(ch);
-        if (lit == self->links_.end()) return;
-        // Drop it from whichever routing table references it.
-        for (auto it = self->inbound_by_ingress_.begin(); it != self->inbound_by_ingress_.end();) {
-            if (it->second.get() == ch) it = self->inbound_by_ingress_.erase(it);
-            else ++it;
+                            [self, ch](zce::Timer*) {
+        bool       was_outbound = false;
+        bool       have_outport = false;
+        zce_uint32 outport_id   = 0;
+        {
+            zce::Guard<zce::Mutex> g(self->lock_);
+            auto lit = self->links_.find(ch);
+            if (lit == self->links_.end()) return;
+            was_outbound = lit->second.outbound;
+            // Drop it from whichever routing table references it, capturing the
+            // outport_id of an outbound link so we can re-dial it.
+            for (auto it = self->outbound_by_outport_.begin();
+                 it != self->outbound_by_outport_.end();) {
+                if (it->second.get() == ch) {
+                    outport_id = it->first;
+                    have_outport = true;
+                    it = self->outbound_by_outport_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (auto it = self->inbound_by_ingress_.begin();
+                 it != self->inbound_by_ingress_.end();) {
+                if (it->second.get() == ch) it = self->inbound_by_ingress_.erase(it);
+                else ++it;
+            }
+            self->links_.erase(lit);
         }
-        for (auto it = self->outbound_by_outport_.begin(); it != self->outbound_by_outport_.end();) {
-            if (it->second.get() == ch) it = self->outbound_by_outport_.erase(it);
-            else ++it;
-        }
-        self->links_.erase(lit);
+        // An Outport link dropped — schedule a backoff re-dial so the route
+        // heals without operator intervention. Inbound (Inport) links are not
+        // re-dialed: the Inport reconnects on its own.
+        if (was_outbound && have_outport) self->scheduleOutportRedial(outport_id);
     });
 }
 

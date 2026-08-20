@@ -50,6 +50,8 @@ class TransitService : public zce::Object {
 
     zce::SmartPtr<IFgwChannel> makeInboundChannel();   // accepted from an Inport
     void dialOutports();                               // config.channels -> Outports
+    void dialOneOutport(const FgwChannelConfig& ccfg); // dial (or re-dial) one Outport link
+    void scheduleOutportRedial(zce_uint32 outport_id); // backoff re-dial after a drop
 
     void onLinkBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32 len);
     void onLinkClosed(IFgwChannel* ch);
