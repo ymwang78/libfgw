@@ -162,10 +162,10 @@ TEST(FgwDataStreamTest, DuplicateDataDeliveredOnce) {
     EXPECT_EQ(handler.bytes, "ABCD");
 }
 
-// Heartbeat stall decision (pure logic).
+// Heartbeat stall decision (pure logic). The receive clock is baselined at
+// connect time, so there is no special "never received" case: a link is stalled
+// purely by how long ago the last byte arrived.
 TEST(FgwHeartbeatTest, StallDecision) {
-    // Never received yet -> never stalled (a fresh link gets grace).
-    EXPECT_FALSE(fgwLinkStalled(/*now*/ 10000, /*last*/ 0, /*timeout*/ 500));
     // Received recently, within timeout -> live.
     EXPECT_FALSE(fgwLinkStalled(1400, 1000, 500));
     // Exactly at the timeout -> not yet stalled (strictly greater).
@@ -173,8 +173,9 @@ TEST(FgwHeartbeatTest, StallDecision) {
     // Past the timeout -> stalled.
     EXPECT_TRUE(fgwLinkStalled(1600, 1000, 500));
     // Tick wraparound: now has wrapped past 0, last is just before the wrap;
-    // the unsigned delta (116) still exceeds the timeout.
+    // the unsigned delta (116) is still compared correctly.
     EXPECT_TRUE(fgwLinkStalled(/*now*/ 100, /*last*/ 0xFFFFFFF0u, /*timeout*/ 50));
+    EXPECT_FALSE(fgwLinkStalled(/*now*/ 100, /*last*/ 0xFFFFFFF0u, /*timeout*/ 200));
 }
 
 #ifndef USE_GTEST_MAIN

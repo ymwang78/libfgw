@@ -291,6 +291,11 @@ void ChannelManager::sendHello(IFgwChannel* ch) {
 
 // ─── Heartbeat / stall detection ─────────────────────────────────────────────
 void ChannelManager::startHeartbeat() {
+    // Guard against a double start() — cancel any timer we already hold.
+    if (heartbeat_timer_) {
+        heartbeat_timer_->cancel();
+        heartbeat_timer_ = nullptr;
+    }
     unsigned interval = config_.heartbeat_interval > 0 ? (unsigned)config_.heartbeat_interval : 5;
     zce::SmartPtr<ChannelManager> self(this);
     heartbeat_timer_ = reactor_->scheduleTimer(zce::SmartPtr<zce::TaskQueue>(sync_queue_),

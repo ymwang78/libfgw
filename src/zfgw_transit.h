@@ -56,6 +56,12 @@ class TransitService : public zce::Object {
     void onLinkBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32 len);
     void onLinkClosed(IFgwChannel* ch);
 
+    // Originate hop-local heartbeats on every link so the Inport/Outport peers
+    // do not mark an idle-but-healthy Transit link as stalled.
+    void startHeartbeat();
+    void onHeartbeatTick();
+    void sendHeartbeat(IFgwChannel* ch);
+
     FgwChannelPtr findOutbound(zce_uint32 outport_id);
     FgwChannelPtr findInbound(zce_uint32 ingress_id);
 
@@ -65,6 +71,7 @@ class TransitService : public zce::Object {
 
     mutable zce::Mutex                   lock_;
     zce::SmartPtr<zce::Acceptor>         acceptor_;
+    zce::SmartPtr<zce::Timer>            heartbeat_timer_;
     zce_uint32                           accepted_id_seq_ = 0x80000000u;
 
     std::map<IFgwChannel*, Link>         links_;

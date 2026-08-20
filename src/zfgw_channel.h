@@ -16,6 +16,7 @@
 #include <zce/zce_object.h>
 #include <zce/zce_reactor.h>
 #include <zce/zce_types.h>
+#include <atomic>
 #include <functional>
 #include <string>
 #include "zfgw_proto.h"
@@ -77,8 +78,9 @@ class IFgwChannel : virtual public zce::Object {
     bool              accepted_ = false;
     /// Set by the ChannelManager heartbeat check when the link has gone silent
     /// (TCP still open but no bytes for link_timeout). A stalled link is kept
-    /// but excluded from live selection until traffic resumes.
-    bool              stalled_ = false;
+    /// but excluded from live selection until traffic resumes. Atomic: written
+    /// by the heartbeat/recv paths, read by selection on other threads.
+    std::atomic<bool> stalled_{false};
     /// Peer identity learned from the FgwHello handshake (0 until received).
     zce_uint32        peer_channel_id_ = 0;
     zce_uint32        peer_ingress_id_ = 0;
@@ -153,6 +155,13 @@ class IFgwChannel : virtual public zce::Object {
   protected:
     void markConnected(bool v) {
         connected_ = v;
+        if (v) {
+            // Baseline the receive clock at connect time so a link that comes
+            // up but is blackholed (never receives) still stalls after a full
+            // link_timeout, instead of being treated as forever-fresh.
+            zce::Guard<zce::Mutex> g(quality_lock_);
+            quality_.last_rx_tick = (zce_uint32)zce_tick();
+        }
         if (on_connected_) on_connected_(this, v ? 0 : ZFGW_ERRCODE_CHANNELFAIL);
     }
     void markClosed() {
@@ -164,6 +173,10 @@ class IFgwChannel : virtual public zce::Object {
         quality_.bytes_sent += n;
     }
     void addRecvBytes(zce_uint32 n) {
+        // Traffic resumed: clear any stall immediately so the channel rejoins
+        // live selection before the next heartbeat tick — otherwise a
+        // synchronous reply to this very frame could hit NOCHANNEL.
+        stalled_.store(false, std::memory_order_relaxed);
         zce::Guard<zce::Mutex> g(quality_lock_);
         quality_.bytes_recv += n;
         quality_.last_rx_tick = (zce_uint32)zce_tick();
