@@ -79,7 +79,11 @@ int fgwSegmentEncode(zce_byte* out, int out_size, const FgwSegmentHeader& hdr,
     if (payload_len < 0 || payload_len > FgwSegmentHeader::MAX_PAYLOAD) {
         return ZFGW_ERRCODE_BADSEGMENT;
     }
-    const int hdr_sz = FgwSegmentHeader::HEADER_SIZE;
+    // Emit a Routed (24-byte) header when the caller flagged routing, otherwise
+    // the Extended (20-byte) header. Both always set FLAG_HDR_EXT.
+    const bool routed = (hdr.flags & FgwSegmentHeader::FLAG_HDR_ROUTE) != 0;
+    const int hdr_sz = routed ? FgwSegmentHeader::ROUTED_HEADER_SIZE
+                              : FgwSegmentHeader::HEADER_SIZE;
     const int total  = hdr_sz + payload_len;
     if (out_size < total) return ZFGW_ERRCODE_MEMORY;
 
@@ -90,14 +94,23 @@ int fgwSegmentEncode(zce_byte* out, int out_size, const FgwSegmentHeader& hdr,
     pack_be32(out + 4, hdr.session_id);
     pack_be32(out + 8, hdr.seq_num);
     pack_be32(out + 12, hdr.ingress_id);
-    pack_be32(out + 16, 0);  // CRC placeholder
+
+    int crc_off;
+    if (routed) {
+        pack_be32(out + 16, hdr.outport_id);
+        pack_be32(out + 20, 0);  // CRC placeholder
+        crc_off = 20;
+    } else {
+        pack_be32(out + 16, 0);  // CRC placeholder
+        crc_off = 16;
+    }
 
     if (payload_len > 0 && payload) {
         std::memcpy(out + hdr_sz, payload, payload_len);
     }
 
     const zce_uint32 crc = fgwCrc32(out, total);
-    pack_be32(out + 16, crc);
+    pack_be32(out + crc_off, crc);
     return total;
 }
 
@@ -115,21 +128,32 @@ int fgwSegmentPeekHeader(const zce_byte* in, int in_size, FgwSegmentHeader& hdr)
         return ZFGW_ERRCODE_BADSEGMENT;
     }
 
+    if (hdr.isHdrRoute()) {
+        if (in_size < FgwSegmentHeader::ROUTED_HEADER_SIZE) return 0;
+        hdr.ingress_id = unpack_be32(in + 12);
+        hdr.outport_id = unpack_be32(in + 16);
+        hdr.crc32      = unpack_be32(in + 20);
+        return FgwSegmentHeader::ROUTED_HEADER_SIZE;
+    }
+
     if (hdr.isHdrExt()) {
         if (in_size < FgwSegmentHeader::HEADER_SIZE) return 0;
         hdr.ingress_id = unpack_be32(in + 12);
+        hdr.outport_id = 0;
         hdr.crc32      = unpack_be32(in + 16);
         return FgwSegmentHeader::HEADER_SIZE;
     }
 
     hdr.ingress_id = 0;
+    hdr.outport_id = 0;
     hdr.crc32        = unpack_be32(in + 12);
     return FgwSegmentHeader::LEGACY_HEADER_SIZE;
 }
 
 bool fgwSegmentVerifyCrc(const zce_byte* in, const FgwSegmentHeader& hdr, int header_wire_bytes) {
     if (header_wire_bytes != FgwSegmentHeader::LEGACY_HEADER_SIZE &&
-        header_wire_bytes != FgwSegmentHeader::HEADER_SIZE) {
+        header_wire_bytes != FgwSegmentHeader::HEADER_SIZE &&
+        header_wire_bytes != FgwSegmentHeader::ROUTED_HEADER_SIZE) {
         return false;
     }
     return crc_ok(in, header_wire_bytes, (int)hdr.payload_len, hdr.crc32);
