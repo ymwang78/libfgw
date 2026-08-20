@@ -133,7 +133,7 @@ std::vector<zce_uint32> LinkSelector::select(const std::vector<FgwChannelPtr>& p
     ranked.reserve(pool.size());
 
     for (const auto& ch : pool) {
-        if (!ch || !ch->isConnected()) continue;
+        if (!ch || !ch->isLive()) continue;
         auto q = ch->quality();
         double rtt = (q.rtt_ms == 0) ? 50.0 : (double)q.rtt_ms;
         double loss = q.loss_rate;
@@ -155,10 +155,30 @@ std::vector<zce_uint32> LinkSelector::select(const std::vector<FgwChannelPtr>& p
             break;
         case ZFGW_MULTIPATH_WEIGHTED:
         default: {
-            // Send on top-N channels, where N is min(3, ranked.size()).
-            size_t n = ranked.size();
-            if (n > 3) n = 3;
-            for (size_t i = 0; i < n; ++i) out.push_back(ranked[i].id);
+            // Explore/exploit dual-send: the primary (exploit) copy plus one
+            // rotating probe (explore). Two copies bound the redundancy at 2x
+            // while a stalled primary can't block delivery.
+            if (ranked.empty()) break;
+
+            // Primary: the fed-back recommended link if it is still live,
+            // otherwise the best-weight link.
+            size_t primary_idx = 0;
+            const zce_uint32 want = primary_channel_id_.load();
+            if (want != 0) {
+                for (size_t i = 0; i < ranked.size(); ++i) {
+                    if (ranked[i].id == want) { primary_idx = i; break; }
+                }
+            }
+            out.push_back(ranked[primary_idx].id);
+
+            // Probe: one channel from the rest, rotating each call so every
+            // alternate link is exercised over time.
+            if (ranked.size() > 1) {
+                const size_t others = ranked.size() - 1;
+                const size_t r = probe_rotation_.fetch_add(1, std::memory_order_relaxed) % others;
+                const size_t idx = (r < primary_idx) ? r : r + 1;  // skip primary
+                out.push_back(ranked[idx].id);
+            }
             break;
         }
     }

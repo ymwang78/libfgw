@@ -13,7 +13,9 @@
 
 #include <zce/zce_reactor.h>
 
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -25,10 +27,13 @@ using namespace zfgw;
 // its zce::Object refcount is never decremented to zero.
 class MockChannel : public IFgwChannel {
   public:
-    explicit MockChannel(zce_uint32 id) : IFgwChannel(id, ZFGW_CHANNEL_TCP, 100) {}
+    explicit MockChannel(zce_uint32 id, zce_uint32 prio = 100)
+        : IFgwChannel(id, ZFGW_CHANNEL_TCP, prio) {}
     int  connect(const FgwEndpoint&) override { return 0; }
     void close() override {}
     int  sendBytes(const zce_byte*, zce_uint32 len) override { return (int)len; }
+    /// Mark connected (and thus live) for selection tests.
+    void setLive() { markConnected(true); }
 };
 
 // Captures everything DataStream delivers for a session.
@@ -160,6 +165,75 @@ TEST(FgwDataStreamTest, DuplicateDataDeliveredOnce) {
     ds.onChannelBytes(&ch, data1.data(), (zce_uint32)data1.size());
 
     EXPECT_EQ(handler.bytes, "ABCD");
+}
+
+// LinkSelector explore/exploit: primary (exploit) + one rotating probe (explore).
+TEST(FgwLinkSelectorTest, ExploreExploitDualSend) {
+    LinkSelector sel;  // default WEIGHTED = explore/exploit
+
+    zce::SmartPtr<IFgwChannel> a(new MockChannel(1, 100));
+    zce::SmartPtr<IFgwChannel> b(new MockChannel(2, 80));
+    zce::SmartPtr<IFgwChannel> c(new MockChannel(3, 60));
+    static_cast<MockChannel*>(a.get())->setLive();
+    static_cast<MockChannel*>(b.get())->setLive();
+    static_cast<MockChannel*>(c.get())->setLive();
+    std::vector<FgwChannelPtr> pool{a, b, c};
+
+    // Default primary = best weight (ch 1); exactly two copies (primary + probe).
+    auto s1 = sel.select(pool);
+    ASSERT_EQ(s1.size(), 2u);
+    EXPECT_EQ(s1[0], 1u);
+    // Probe rotates across the non-primary links on successive calls.
+    auto s2 = sel.select(pool);
+    EXPECT_EQ(s2[0], 1u);
+    EXPECT_NE(s1[1], s2[1]);
+    EXPECT_NE(s1[1], 1u);
+    EXPECT_NE(s2[1], 1u);
+
+    // A fed-back recommendation overrides the primary.
+    sel.setPrimaryChannel(3);
+    auto s3 = sel.select(pool);
+    ASSERT_EQ(s3.size(), 2u);
+    EXPECT_EQ(s3[0], 3u);   // primary is now the fed-back link
+    EXPECT_NE(s3[1], 3u);   // probe is one of the others
+
+    // A single live link yields a single copy (no probe).
+    std::vector<FgwChannelPtr> one{a};
+    auto s4 = sel.select(one);
+    ASSERT_EQ(s4.size(), 1u);
+    EXPECT_EQ(s4[0], 1u);
+}
+
+// Concurrent select() on a selector shared by multiple DataStreams must be a
+// data-race-free (the probe rotation counter is atomic). Every result must stay
+// well-formed and both alternate links must still get probed.
+TEST(FgwLinkSelectorTest, ConcurrentSelectIsThreadSafe) {
+    LinkSelector sel;
+    zce::SmartPtr<IFgwChannel> a(new MockChannel(1, 100));
+    zce::SmartPtr<IFgwChannel> b(new MockChannel(2, 80));
+    zce::SmartPtr<IFgwChannel> c(new MockChannel(3, 60));
+    static_cast<MockChannel*>(a.get())->setLive();
+    static_cast<MockChannel*>(b.get())->setLive();
+    static_cast<MockChannel*>(c.get())->setLive();
+    std::vector<FgwChannelPtr> pool{a, b, c};
+
+    std::atomic<int> saw2{0}, saw3{0}, bad{0};
+    auto worker = [&]() {
+        for (int i = 0; i < 5000; ++i) {
+            auto s = sel.select(pool);
+            if (s.size() != 2 || s[0] != 1u) { ++bad; continue; }
+            if (s[1] == 2u) ++saw2;
+            else if (s[1] == 3u) ++saw3;
+            else ++bad;
+        }
+    };
+    std::vector<std::thread> ts;
+    for (int t = 0; t < 4; ++t) ts.emplace_back(worker);
+    for (auto& t : ts) t.join();
+
+    EXPECT_EQ(bad.load(), 0);
+    EXPECT_GT(saw2.load(), 0);
+    EXPECT_GT(saw3.load(), 0);
 }
 
 // Heartbeat stall decision (pure logic). The receive clock is baselined at
