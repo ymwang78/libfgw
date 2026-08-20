@@ -9,6 +9,7 @@
 #include "zfgw_datastream.h"
 #include "zfgw_channel_manager.h"
 #include "zfgw_segment.h"
+#include "zfgw_pack.h"
 #include "zfgw.h"
 
 #include <zce/zce_reactor.h>
@@ -121,6 +122,50 @@ TEST(FgwDataStreamTest, FinCloseReentrancyNoCrash) {
     // A second FIN for a now-gone session must also be a no-op, not a crash.
     ds.onChannelBytes(&ch, fin.data(), (zce_uint32)fin.size());
     SUCCEED();
+}
+
+// Encode a FLAG_ACK control segment carrying an FgwLinkFeedback.
+std::vector<zce_byte> makeFeedback(zce_uint32 epoch, zce_uint32 primary) {
+    FgwLinkFeedback fb;
+    fb.decision_epoch      = epoch;
+    fb.recommended_primary = primary;
+    fb.alive_bitmap        = 0;
+    fb.highest_seq         = 0;
+    zce_byte payload[64];
+    int plen = zce::zdp::zds_pack(payload, (int)sizeof(payload), fb, nullptr, true);
+    EXPECT_GT(plen, 0);
+
+    FgwSegmentHeader hdr;
+    hdr.flags       = FgwSegmentHeader::FLAG_ACK;
+    hdr.payload_len = (zce_uint16)plen;
+    std::vector<zce_byte> out(FgwSegmentHeader::HEADER_SIZE + plen + 8);
+    int wrote = fgwSegmentEncode(out.data(), (int)out.size(), hdr, payload, plen);
+    EXPECT_GT(wrote, 0);
+    out.resize(wrote > 0 ? (size_t)wrote : 0);
+    return out;
+}
+
+// Inbound racing feedback sets the LinkSelector primary, and a stale (older or
+// equal) epoch is ignored.
+TEST(FgwDataStreamTest, AppliesRacingFeedbackByEpoch) {
+    zce::SmartPtr<zce::Reactor> reactor(zce::ReactorSigt::instance());
+    zce::SmartPtr<ChannelManager> mgr(new ChannelManager(reactor, nullptr));
+    DataStream ds(mgr, /*ingress*/ 0, 1200, 1024, /*verify_crc*/ true);
+    MockChannel ch(1);
+
+    auto f5 = makeFeedback(/*epoch*/ 5, /*primary*/ 42);
+    ds.onChannelBytes(&ch, f5.data(), (zce_uint32)f5.size());
+    EXPECT_EQ(mgr->selector().primaryChannel(), 42u);
+
+    // Older epoch must be ignored.
+    auto f3 = makeFeedback(3, 99);
+    ds.onChannelBytes(&ch, f3.data(), (zce_uint32)f3.size());
+    EXPECT_EQ(mgr->selector().primaryChannel(), 42u);
+
+    // Newer epoch applies.
+    auto f6 = makeFeedback(6, 7);
+    ds.onChannelBytes(&ch, f6.data(), (zce_uint32)f6.size());
+    EXPECT_EQ(mgr->selector().primaryChannel(), 7u);
 }
 
 // The regression: SYN and the first DATA segment both legitimately carry seq 0.

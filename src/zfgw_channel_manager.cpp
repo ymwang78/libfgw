@@ -340,10 +340,12 @@ void ChannelManager::sendHeartbeat(IFgwChannel* ch) {
 
 void ChannelManager::onHeartbeatTick() {
     std::vector<FgwChannelPtr> chans;
+    std::vector<DataStream*>   subs;
     unsigned link_timeout_ms;
     {
         zce::Guard<zce::Mutex> g(lock_);
         for (auto& kv : channels_) if (kv.second) chans.push_back(kv.second);
+        subs = bytes_subscribers_;
         link_timeout_ms = (config_.link_timeout > 0 ? (unsigned)config_.link_timeout : 15) * 1000;
     }
 
@@ -360,6 +362,12 @@ void ChannelManager::onHeartbeatTick() {
             ZCE_DEBUG((ZLOG_INFOR, "fgw: channel %u %s", ch->channelId(),
                        ch->isStalled() ? "STALLED (no rx)" : "recovered"));
         }
+    }
+
+    // Drive the racing arbiter on the same cadence: each stream feeds its
+    // measured winner back to the peer.
+    for (auto* ds : subs) {
+        if (ds) ds->emitFeedback();
     }
 }
 
@@ -493,9 +501,10 @@ void ChannelManager::onChannelConnected(IFgwChannel* ch, int errcode) {
     if (errcode >= 0) {
         ZCE_DEBUG((ZLOG_TRACE, "fgw: channel %u connected", ch->channelId()));
         if (on_opened_) on_opened_(this, ch);
-        // The dialing side announces itself first; accepted channels wait for
-        // the peer's Hello instead of sending their own.
-        if (!ch->isAccepted()) sendHello(ch);
+        // Both sides announce their channel id via Hello so each end can map its
+        // links to the peer's ids — needed for symmetric racing feedback (the
+        // recommended primary is expressed in the *sender's* id space).
+        sendHello(ch);
     } else {
         ZCE_ERROR((ZLOG_ERROR, "fgw: channel %u connect failed 0x%x", ch->channelId(), errcode));
     }

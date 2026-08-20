@@ -86,6 +86,11 @@ class DataStream : public zce::Object {
     /// Invoked when raw bytes arrive on a link channel.
     void onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32 len);
 
+    /// Racing arbiter tick (driven by the ChannelManager heartbeat): pick the
+    /// link that has won the most arrival races and feed the recommendation
+    /// back to the peer so it can set that link as its send primary.
+    void emitFeedback();
+
     /// Unknown session hook — must return a handler and/or nullptr.
     using UnknownSessionCb =
         std::function<ISessionHandler*(zce_uint32 peer_ingress, zce_uint32 session_id)>;
@@ -146,6 +151,14 @@ class DataStream : public zce::Object {
     static constexpr size_t kDedupRing = 4096;
     std::deque<DedupKey>                       dedup_queue_;
     std::map<DedupKey, bool>                   dedup_map_;
+
+    // Racing arbiter state. As the receiver of a multipath leg, this side counts
+    // which peer channel delivered each segment first; emitFeedback() turns the
+    // winner into a recommended primary sent back to the peer. As a sender, it
+    // applies inbound feedback (newer epoch wins) to its LinkSelector.
+    std::map<zce_uint32, zce_uint32>           peer_win_count_;  // peer_channel_id -> wins
+    zce_uint32                                 feedback_epoch_ = 0;  // epoch we emit
+    zce_uint32                                 applied_epoch_  = 0;  // epoch we applied
 
     UnknownSessionCb unknown_cb_;
 };
