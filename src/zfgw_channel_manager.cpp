@@ -185,6 +185,7 @@ int ChannelManager::start(const FgwConfig& cfg) {
             ZCE_ERROR((ZLOG_ERROR, "fgw: addChannel %u failed, ret=0x%x", ccfg.channel_id, ret));
         }
     }
+    startHeartbeat();
     return 0;
 }
 
@@ -288,6 +289,55 @@ void ChannelManager::sendHello(IFgwChannel* ch) {
     ch->sendBytes(frame, (zce_uint32)wrote);
 }
 
+// ─── Heartbeat / stall detection ─────────────────────────────────────────────
+void ChannelManager::startHeartbeat() {
+    unsigned interval = config_.heartbeat_interval > 0 ? (unsigned)config_.heartbeat_interval : 5;
+    zce::SmartPtr<ChannelManager> self(this);
+    heartbeat_timer_ = reactor_->scheduleTimer(zce::SmartPtr<zce::TaskQueue>(sync_queue_),
+                                               (int)interval * 1000, /*repeat*/ true,
+                                               [self](zce::Timer*) { self->onHeartbeatTick(); });
+}
+
+void ChannelManager::sendHeartbeat(IFgwChannel* ch) {
+    if (!ch) return;
+    FgwSegmentHeader hdr;
+    hdr.flags       = FgwSegmentHeader::FLAG_HEARTBEAT;
+    hdr.payload_len = 0;
+    hdr.session_id  = 0;
+    hdr.seq_num     = 0;
+    hdr.ingress_id  = config_.ingress_id;
+
+    zce_byte frame[64];
+    int wrote = fgwSegmentEncode(frame, (int)sizeof(frame), hdr, nullptr, 0);
+    if (wrote < 0) return;
+    ch->sendBytes(frame, (zce_uint32)wrote);
+}
+
+void ChannelManager::onHeartbeatTick() {
+    std::vector<FgwChannelPtr> chans;
+    unsigned link_timeout_ms;
+    {
+        zce::Guard<zce::Mutex> g(lock_);
+        for (auto& kv : channels_) if (kv.second) chans.push_back(kv.second);
+        link_timeout_ms = (config_.link_timeout > 0 ? (unsigned)config_.link_timeout : 15) * 1000;
+    }
+
+    const zce_uint32 now = (zce_uint32)zce_tick();
+    for (auto& ch : chans) {
+        if (!ch->isConnected()) continue;
+        sendHeartbeat(ch.get());
+        // Stall detection: TCP still open but silent past link_timeout. last==0
+        // means "nothing received yet" — give a fresh link time, don't stall it.
+        const zce_uint32 last = ch->lastRxTick();
+        const bool stalled = fgwLinkStalled(now, last, link_timeout_ms);
+        if (stalled != ch->isStalled()) {
+            ZCE_DEBUG((ZLOG_INFOR, "fgw: channel %u %s", ch->channelId(),
+                       stalled ? "STALLED (no rx)" : "recovered"));
+        }
+        ch->markStalled(stalled);
+    }
+}
+
 int ChannelManager::addChannel(const FgwChannelConfig& cfg) {
     zce::Guard<zce::Mutex> g(lock_);
     if (channels_.count(cfg.channel_id)) {
@@ -346,7 +396,7 @@ std::vector<FgwChannelPtr> ChannelManager::liveChannels() const {
     std::vector<FgwChannelPtr> out;
     out.reserve(channels_.size());
     for (const auto& kv : channels_) {
-        if (kv.second && kv.second->isConnected()) {
+        if (kv.second && kv.second->isLive()) {
             out.push_back(kv.second);
         }
     }

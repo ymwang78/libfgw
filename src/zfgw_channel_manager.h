@@ -22,6 +22,14 @@ namespace zfgw {
 
 class DataStream;
 
+/// Pure stall-decision used by the heartbeat check (extracted for testability):
+/// a link is stalled when it has received at least once (last_rx_tick != 0) but
+/// nothing within timeout_ms. All values are zce_tick() milliseconds; the
+/// subtraction is unsigned so it is correct across tick wraparound.
+inline bool fgwLinkStalled(zce_uint32 now_tick, zce_uint32 last_rx_tick, zce_uint32 timeout_ms) {
+    return (last_rx_tick != 0) && ((now_tick - last_rx_tick) > timeout_ms);
+}
+
 // ─── UDP + libutp context holder ────────────────────────────────────────────
 //
 // Owns a single utp_context and the zce::Udp socket that feeds packets
@@ -136,6 +144,11 @@ class ChannelManager : public zce::Object {
     zce::SmartPtr<IFgwChannel> makeAcceptedChannel();
     /// Send the FgwHello handshake on a freshly-connected dialed channel.
     void sendHello(IFgwChannel* ch);
+
+    /// Heartbeat: periodic keepalive + stall detection over all channels.
+    void startHeartbeat();
+    void onHeartbeatTick();
+    void sendHeartbeat(IFgwChannel* ch);
 
     zce::SmartPtr<zce::Reactor>                    reactor_;
     zce::TaskQueue*                                sync_queue_ = nullptr;

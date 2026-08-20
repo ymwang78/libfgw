@@ -75,6 +75,10 @@ class IFgwChannel : virtual public zce::Object {
     /// than dialed; accepted channels are not auto-reconnected and do not
     /// send the initiating Hello (the dialing peer does).
     bool              accepted_ = false;
+    /// Set by the ChannelManager heartbeat check when the link has gone silent
+    /// (TCP still open but no bytes for link_timeout). A stalled link is kept
+    /// but excluded from live selection until traffic resumes.
+    bool              stalled_ = false;
     /// Peer identity learned from the FgwHello handshake (0 until received).
     zce_uint32        peer_channel_id_ = 0;
     zce_uint32        peer_ingress_id_ = 0;
@@ -96,6 +100,16 @@ class IFgwChannel : virtual public zce::Object {
     ZFGW_CHANNEL_KIND  kind()       const { return kind_; }
     zce_uint32         priority()   const { return priority_; }
     bool               isConnected() const { return connected_; }
+
+    /// Liveness: connected AND not marked stalled by the heartbeat check.
+    /// Selection uses this so a silent (GFW-stalled) link is skipped.
+    bool               isLive()     const { return connected_ && !stalled_; }
+    bool               isStalled()  const { return stalled_; }
+    void               markStalled(bool v) { stalled_ = v; }
+    zce_uint32         lastRxTick() const {
+        zce::Guard<zce::Mutex> g(quality_lock_);
+        return quality_.last_rx_tick;
+    }
 
     bool               isAccepted() const { return accepted_; }
     void               markAccepted()     { accepted_ = true; }

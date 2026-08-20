@@ -162,6 +162,21 @@ TEST(FgwDataStreamTest, DuplicateDataDeliveredOnce) {
     EXPECT_EQ(handler.bytes, "ABCD");
 }
 
+// Heartbeat stall decision (pure logic).
+TEST(FgwHeartbeatTest, StallDecision) {
+    // Never received yet -> never stalled (a fresh link gets grace).
+    EXPECT_FALSE(fgwLinkStalled(/*now*/ 10000, /*last*/ 0, /*timeout*/ 500));
+    // Received recently, within timeout -> live.
+    EXPECT_FALSE(fgwLinkStalled(1400, 1000, 500));
+    // Exactly at the timeout -> not yet stalled (strictly greater).
+    EXPECT_FALSE(fgwLinkStalled(1500, 1000, 500));
+    // Past the timeout -> stalled.
+    EXPECT_TRUE(fgwLinkStalled(1600, 1000, 500));
+    // Tick wraparound: now has wrapped past 0, last is just before the wrap;
+    // the unsigned delta (116) still exceeds the timeout.
+    EXPECT_TRUE(fgwLinkStalled(/*now*/ 100, /*last*/ 0xFFFFFFF0u, /*timeout*/ 50));
+}
+
 #ifndef USE_GTEST_MAIN
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

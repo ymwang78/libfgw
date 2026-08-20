@@ -181,6 +181,8 @@ void TransitService::onLinkBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint3
                     inbound_by_ingress_[hello.ingress_id] = L.chan;
                 }
             }
+        } else if (hdr.isHeartbeat()) {
+            // Hop-local keepalive: consume, never forward end-to-end.
         } else if (!L.outbound) {
             // From an Inport: learn its ingress and forward by outport_id.
             inbound_by_ingress_[hdr.ingress_id] = L.chan;
