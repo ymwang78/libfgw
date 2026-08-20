@@ -1,20 +1,20 @@
-﻿/* ====================================================================== */
-/*  WIRE FORMAT STABILITY                                                  */
-/*                                                                        */
-/*  zgen assigns each field a ZDS struct-prefix bit by its position in    */
-/*  the struct, in declaration order. Persisted / on-wire compatibility   */
-/*  therefore depends on field order: NEVER reorder or insert fields in    */
-/*  the middle of an existing struct — ALWAYS append new fields at the     */
-/*  end so bits are only added, never shifted.                            */
-/*                                                                        */
-/*  NOTE: v0.2.0 regenerated these types via zgen. The earlier hand-      */
-/*  written pack appended `ingress_id` at the LAST bit; zgen places it by  */
-/*  declaration order (bit 1). FgwConfig's persisted `config.zds` is thus  */
-/*  NOT compatible with the pre-zgen format — regenerate any old file.     */
-/* ====================================================================== */
-
-namespace zfgw
+﻿namespace zfgw
 {
+    /* ================================================================== */
+    /*  WIRE FORMAT STABILITY                                              */
+    /*                                                                    */
+    /*  zgen assigns each field a ZDS struct-prefix bit by its position   */
+    /*  in the struct, in declaration order. Persisted / on-wire compat   */
+    /*  therefore depends on field order: NEVER reorder or insert fields  */
+    /*  in the middle of an existing struct — ALWAYS append new fields at */
+    /*  the end so bits are only added, never shifted.                    */
+    /*                                                                    */
+    /*  NOTE: v0.2.0 regenerated these types via zgen. The earlier hand-  */
+    /*  written pack appended `ingress_id` at the LAST bit; zgen places   */
+    /*  it by declaration order (bit 1). FgwConfig's persisted config.zds */
+    /*  is thus NOT compatible with the pre-zgen format — regenerate.     */
+    /* ================================================================== */
+
     /* ------------------------------------------------------------------ */
     /*  Endpoint / Channel descriptors                                    */
     /* ------------------------------------------------------------------ */
@@ -50,6 +50,10 @@ namespace zfgw
         uint16  reconnect_max = 60            /* seconds */;
         byte    multipath_mode = 2            /* 0 = best, 1 = all, 2 = weighted */;
         byte    enable_crc = 1                /* bool */;
+        /* Inport: stamp this outport_id on outbound (Routed) segments so a
+           Transit can fan out to the right Outport. 0 = direct (no routing,
+           emit Extended headers). Appended at end to keep the ZDS layout stable. */
+        uint32  route_outport_id = 0;
     };
 
     /* ------------------------------------------------------------------ */

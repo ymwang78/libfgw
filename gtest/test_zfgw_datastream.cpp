@@ -7,8 +7,11 @@
 #include <gtest/gtest.h>
 
 #include "zfgw_datastream.h"
+#include "zfgw_channel_manager.h"
 #include "zfgw_segment.h"
 #include "zfgw.h"
+
+#include <zce/zce_reactor.h>
 
 #include <string>
 #include <vector>
@@ -67,6 +70,52 @@ DataStream makeStream() {
     zce::SmartPtr<ChannelManager> no_manager;
     return DataStream(no_manager, /*local_ingress*/ 0, /*segment*/ 1200, /*window*/ 1024,
                       /*verify_crc*/ true);
+}
+
+// A handler that re-enters closeSession() from onSessionClose — exactly what
+// the Outport's FgwRelaySession does — which used to erase the map entry a
+// second time inside onChannelBytes() and crash.
+class ReentrantCloseHandler : public ISessionHandler {
+  public:
+    DataStream* ds = nullptr;
+    zce_uint32  ingress = 0;
+    int         closes = 0;
+    void onSessionData(DataStream*, zce_uint32, const zce_byte*, zce_uint32) override {}
+    void onSessionClose(DataStream* s, zce_uint32 sid) override {
+        ++closes;
+        if (ds) ds->closeSession(sid, ingress);  // re-enter; erases the session
+    }
+};
+
+// Receiving a FIN must not double-erase the session when the handler's
+// onSessionClose re-enters closeSession(). Needs a real (empty) ChannelManager
+// so closeSession()'s FIN send resolves to "no live channel" instead of a null
+// manager deref.
+TEST(FgwDataStreamTest, FinCloseReentrancyNoCrash) {
+    zce::SmartPtr<zce::Reactor> reactor(zce::ReactorSigt::instance());
+    zce::SmartPtr<ChannelManager> mgr(new ChannelManager(reactor, nullptr));
+    DataStream ds(mgr, /*ingress*/ 0, 1200, 1024, /*verify_crc*/ true);
+
+    MockChannel ch(1);
+    ReentrantCloseHandler handler;
+    handler.ds = &ds;
+    handler.ingress = 0;
+    ds.setUnknownSessionCallback(
+        [&](zce_uint32, zce_uint32) -> ISessionHandler* { return &handler; });
+
+    const zce_uint32 kSession = 5;
+    auto syn  = makeSegment(FgwSegmentHeader::FLAG_SYN, 0, kSession, 0, "");
+    auto data = makeSegment(FgwSegmentHeader::FLAG_DATA, 0, kSession, 0, "x");
+    auto fin  = makeSegment(FgwSegmentHeader::FLAG_FIN, 0, kSession, 1, "");
+
+    ds.onChannelBytes(&ch, syn.data(), (zce_uint32)syn.size());
+    ds.onChannelBytes(&ch, data.data(), (zce_uint32)data.size());
+    ds.onChannelBytes(&ch, fin.data(), (zce_uint32)fin.size());   // must not crash
+    EXPECT_EQ(handler.closes, 1);
+
+    // A second FIN for a now-gone session must also be a no-op, not a crash.
+    ds.onChannelBytes(&ch, fin.data(), (zce_uint32)fin.size());
+    SUCCEED();
 }
 
 // The regression: SYN and the first DATA segment both legitimately carry seq 0.

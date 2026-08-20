@@ -14,12 +14,14 @@
 namespace zfgw {
 
 DataStream::DataStream(const zce::SmartPtr<ChannelManager>& manager, zce_uint32 local_ingress_id,
-                       zce_uint16 segment_size, zce_uint16 recv_window, bool verify_crc)
+                       zce_uint16 segment_size, zce_uint16 recv_window, bool verify_crc,
+                       zce_uint32 route_outport_id)
     : manager_(manager),
       local_ingress_id_(local_ingress_id),
       segment_size_(segment_size),
       recv_window_(recv_window),
-      verify_crc_(verify_crc) {
+      verify_crc_(verify_crc),
+      route_outport_id_(route_outport_id) {
     if (segment_size_ == 0 || segment_size_ > FgwSegmentHeader::MAX_PAYLOAD) {
         segment_size_ = 1200;
     }
@@ -97,8 +99,14 @@ int DataStream::sendSegment(zce_uint32 wire_ingress, zce_uint32 session_id, zce_
     hdr.session_id  = session_id;
     hdr.seq_num     = seq;
     hdr.ingress_id  = wire_ingress;
+    if (route_outport_id_ != 0) {
+        hdr.flags      = (zce_uint8)(hdr.flags | FgwSegmentHeader::FLAG_HDR_ROUTE);
+        hdr.outport_id = route_outport_id_;
+    }
 
-    const int total = FgwSegmentHeader::HEADER_SIZE + (int)payload_len;
+    const int hdr_sz = (route_outport_id_ != 0) ? FgwSegmentHeader::ROUTED_HEADER_SIZE
+                                                : FgwSegmentHeader::HEADER_SIZE;
+    const int total = hdr_sz + (int)payload_len;
     zce::RefBlock dblock;
     ZCE_MBACQUIRE(dblock, total);
     if ((int)dblock.space() < total) return ZFGW_ERRCODE_MEMORY;
@@ -223,10 +231,15 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         }
         if (hdr.isFin()) {
             if (it != sessions_.end()) {
-                if (it->second.handler) {
-                    it->second.handler->onSessionClose(this, hdr.session_id);
+                ISessionHandler* h = it->second.handler;
+                if (h) {
+                    // The handler's onSessionClose() may re-enter closeSession()
+                    // and erase this very entry, invalidating `it`. Re-find after
+                    // the callback before erasing to avoid a double-erase crash.
+                    h->onSessionClose(this, hdr.session_id);
+                    it = sessions_.find(skey);
                 }
-                sessions_.erase(it);
+                if (it != sessions_.end()) sessions_.erase(it);
             }
             pos += (size_t)total;
             continue;
@@ -267,15 +280,23 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
 
 void DataStream::deliverInOrder(SessionState& state) {
     if (!state.handler) return;
+    // Collect the contiguous in-order run BEFORE invoking the handler: a
+    // handler callback may re-enter and erase this session (e.g. an Outport
+    // relay closing on a SOCKS5 error), which would leave `state` dangling for
+    // the next iteration. Save what we need, then deliver from locals only.
+    ISessionHandler* handler = state.handler;
+    const zce_uint32 sid = state.session_id;
+    std::vector<zce::RefBlock> ready;
     while (!state.rx_buffer.empty()) {
         auto it = state.rx_buffer.begin();
         if (it->first != state.expected_rx_seq) break;
-        zce::RefBlock blk = std::move(it->second);
+        ready.push_back(std::move(it->second));
         state.rx_buffer.erase(it);
         ++state.expected_rx_seq;
+    }
+    for (auto& blk : ready) {
         if (blk.length() > 0) {
-            state.handler->onSessionData(this, state.session_id,
-                                         blk.rd_ptr(), (zce_uint32)blk.length());
+            handler->onSessionData(this, sid, blk.rd_ptr(), (zce_uint32)blk.length());
         }
     }
 }

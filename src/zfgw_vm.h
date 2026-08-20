@@ -18,6 +18,7 @@
 #include "zfgw_datastream.h"
 #include "zfgw_inport.h"
 #include "zfgw_outport.h"
+#include "zfgw_transit.h"
 #include "zfgw_proto.h"
 
 namespace zfgw {
@@ -67,6 +68,7 @@ class ZfgwMachine : public zce::zvm::Machine {
     zce::SmartPtr<DataStream>                   stream_;
     zce::SmartPtr<InportService>                inport_;
     zce::SmartPtr<OutportService>               outport_;
+    zce::SmartPtr<TransitService>               transit_;
     bool                                        running_ = false;
 };
 

@@ -65,7 +65,7 @@ class DataStream : public zce::Object {
   public:
     DataStream(const zce::SmartPtr<ChannelManager>& manager, zce_uint32 local_ingress_id,
                zce_uint16 segment_size = 1200, zce_uint16 recv_window = 1024,
-               bool verify_crc = true);
+               bool verify_crc = true, zce_uint32 route_outport_id = 0);
     ~DataStream() override;
 
     /// Register a locally-initiated session (Inport).  Sends SYN with
@@ -135,6 +135,9 @@ class DataStream : public zce::Object {
     zce_uint16                                 segment_size_;
     zce_uint16                                 recv_window_;
     bool                                       verify_crc_ = true;
+    /// If non-zero, outbound segments are emitted as Routed (24-byte) headers
+    /// stamped with this outport_id so a Transit can fan them out.
+    zce_uint32                                 route_outport_id_ = 0;
 
     mutable zce::Mutex                         lock_;
     std::map<SessionKey, SessionState>         sessions_;

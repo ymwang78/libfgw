@@ -64,6 +64,7 @@ namespace zfgw
             if (reconnect_max != _t.reconnect_max) return false;
             if (multipath_mode != _t.multipath_mode) return false;
             if (enable_crc != _t.enable_crc) return false;
+            if (route_outport_id != _t.route_outport_id) return false;
             return true;
         }
 
@@ -81,6 +82,7 @@ namespace zfgw
         zce_uint16    reconnect_max = 60/* seconds */;
         zce_byte    multipath_mode = 2/* 0 = best, 1 = all, 2 = weighted */;
         zce_byte    enable_crc = 1/* bool */;
+        zce_uint32    route_outport_id = 0;
     };
     struct FgwLinkQuality
     {

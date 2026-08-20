@@ -31,10 +31,13 @@ namespace zfgw {
 struct FgwSegmentHeader {
     static constexpr zce_uint8 MAGIC = 0xF6;
     static constexpr zce_uint16 MAX_PAYLOAD = 65519;
-    /// Current wire header size when FLAG_HDR_EXT is set (preferred).
+    /// Header size when FLAG_HDR_EXT is set (carries ingress_id).
     static constexpr int HEADER_SIZE = 20;
     /// Legacy header size (no ingress field on wire).
     static constexpr int LEGACY_HEADER_SIZE = 16;
+    /// Routed header size (FLAG_HDR_EXT + FLAG_HDR_ROUTE): also carries
+    /// outport_id, so a stateless Transit can forward without session state.
+    static constexpr int ROUTED_HEADER_SIZE = 24;
 
     enum Flag : zce_uint8 {
         FLAG_SYN       = 0x01,
@@ -45,7 +48,10 @@ struct FgwSegmentHeader {
         /// Per-link handshake: payload carries ZDS(FgwHello). Handled at the
         /// channel/identity level, never as a session segment.
         FLAG_HELLO     = 0x20,
-        /// If set, header is 20 bytes and bytes 12–15 carry ingress_id.
+        /// If set (with FLAG_HDR_EXT), header is 24 bytes and bytes 16–19 carry
+        /// outport_id (forward-routing key for a Transit).
+        FLAG_HDR_ROUTE = 0x40,
+        /// If set, header is ≥20 bytes and bytes 12–15 carry ingress_id.
         FLAG_HDR_EXT   = 0x80,
     };
 
@@ -55,6 +61,7 @@ struct FgwSegmentHeader {
     zce_uint32 session_id  = 0;
     zce_uint32 seq_num     = 0;
     zce_uint32 ingress_id  = 0;
+    zce_uint32 outport_id  = 0;
     zce_uint32 crc32       = 0;
 
     bool isData() const      { return (flags & FLAG_DATA) != 0; }
@@ -64,6 +71,7 @@ struct FgwSegmentHeader {
     bool isSyn() const       { return (flags & FLAG_SYN) != 0; }
     bool isAck() const       { return (flags & FLAG_ACK) != 0; }
     bool isHdrExt() const    { return (flags & FLAG_HDR_EXT) != 0; }
+    bool isHdrRoute() const  { return (flags & FLAG_HDR_ROUTE) != 0; }
 };
 
 /// Encode a segment (header + payload). Always emits **20-byte** extended header

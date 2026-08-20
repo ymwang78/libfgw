@@ -73,6 +73,47 @@ TEST(FgwSegmentTest, Crc32Deterministic) {
     EXPECT_NE(c, fgwCrc32(msg, sizeof(msg), 1));
 }
 
+TEST(FgwSegmentTest, RoutedHeaderRoundTrip) {
+    const zce_byte payload[] = {0xAA, 0xBB, 0xCC};
+
+    FgwSegmentHeader hdr;
+    hdr.payload_len = sizeof(payload);
+    hdr.session_id  = 0x0BADF00D;
+    hdr.seq_num     = 7;
+    hdr.ingress_id  = 0x11112222;
+    hdr.outport_id  = 0x33334444;
+    hdr.flags       = FgwSegmentHeader::FLAG_DATA | FgwSegmentHeader::FLAG_HDR_ROUTE;
+
+    std::vector<zce_byte> buf(64);
+    int wrote = fgwSegmentEncode(buf.data(), (int)buf.size(), hdr, payload, sizeof(payload));
+    ASSERT_GT(wrote, 0);
+    EXPECT_EQ(wrote, FgwSegmentHeader::ROUTED_HEADER_SIZE + (int)sizeof(payload));
+
+    FgwSegmentHeader decoded{};
+    int peeked = fgwSegmentPeekHeader(buf.data(), wrote, decoded);
+    ASSERT_EQ(peeked, FgwSegmentHeader::ROUTED_HEADER_SIZE);
+    EXPECT_TRUE(decoded.isHdrRoute());
+    EXPECT_TRUE(decoded.isHdrExt());
+    EXPECT_EQ(decoded.ingress_id, 0x11112222u);
+    EXPECT_EQ(decoded.outport_id, 0x33334444u);
+    EXPECT_EQ(decoded.session_id, 0x0BADF00Du);
+    EXPECT_TRUE(decoded.isData());
+    EXPECT_TRUE(fgwSegmentVerifyCrc(buf.data(), decoded, peeked));
+
+    // A non-routed segment must report outport_id == 0.
+    FgwSegmentHeader ext;
+    ext.payload_len = 0;
+    ext.session_id  = 1;
+    ext.flags       = FgwSegmentHeader::FLAG_DATA;
+    std::vector<zce_byte> buf2(32);
+    int w2 = fgwSegmentEncode(buf2.data(), (int)buf2.size(), ext, nullptr, 0);
+    FgwSegmentHeader dec2{};
+    int p2 = fgwSegmentPeekHeader(buf2.data(), w2, dec2);
+    EXPECT_EQ(p2, FgwSegmentHeader::HEADER_SIZE);
+    EXPECT_FALSE(dec2.isHdrRoute());
+    EXPECT_EQ(dec2.outport_id, 0u);
+}
+
 TEST(FgwSegmentTest, SynFlagIdentified) {
     FgwSegmentHeader hdr;
     hdr.payload_len = 0;
