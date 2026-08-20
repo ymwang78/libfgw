@@ -57,12 +57,27 @@ int ZfgwMachine::doBringup() {
     }
 
     zce::TaskQueue* sync_q = static_cast<zce::TaskQueue*>(this);
+
+    if (config_.role == ZFGW_ROLE_TRANSIT) {
+        // A Transit holds no session state: it runs neither a ChannelManager
+        // nor a DataStream, only its own forwarding links.
+        transit_ = new TransitService(reactor, sync_q, config_);
+        int tret = transit_->start();
+        if (tret < 0) {
+            doTeardown();
+            return tret;
+        }
+        running_ = true;
+        ZCE_DEBUG((ZLOG_INFOR, "ZfgwMachine '%s' started as role=TRANSIT", vm_name_.c_str()));
+        return 0;
+    }
+
     manager_ = new ChannelManager(reactor, sync_q);
     int ret = manager_->start(config_);
     if (ret < 0) return ret;
 
     stream_ = new DataStream(manager_, config_.ingress_id, config_.segment_size, config_.recv_window,
-                             config_.enable_crc != 0);
+                             config_.enable_crc != 0, config_.route_outport_id);
 
     if (config_.role == ZFGW_ROLE_INPORT) {
         inport_ = new InportService(reactor, stream_);
@@ -105,6 +120,7 @@ void ZfgwMachine::doTeardown() {
     zce::Guard<zce::Mutex> g(lock_);
     if (inport_)  { inport_->stop();  inport_  = nullptr; }
     if (outport_) { outport_->stop(); outport_ = nullptr; }
+    if (transit_) { transit_->stop(); transit_ = nullptr; }
     stream_ = nullptr;
     if (manager_) { manager_->stop(); manager_ = nullptr; }
     running_ = false;

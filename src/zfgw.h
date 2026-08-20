@@ -52,6 +52,7 @@ enum ZFGW_ERRCODE {
 enum ZFGW_ROLE {
     ZFGW_ROLE_INPORT  = 0,  ///< local entry, accepts SOCKS5 clients
     ZFGW_ROLE_OUTPORT = 1,  ///< remote egress, terminates SOCKS5 on DataStream
+    ZFGW_ROLE_TRANSIT = 2,  ///< stateless forwarder: routes by outport_id / ingress_id
 };
 
 /// Link kind used in FgwChannelConfig.kind
