@@ -64,5 +64,26 @@ if(EXISTS ${ZCE_LIB})
     add_test(NAME ZfgwPackTest COMMAND test_zfgw_pack)
 endif()
 
+# ─── test_zfgw_datastream (receive-path dedup / delivery regression) ─────────
+if(EXISTS ${ZCE_LIB})
+    add_executable(test_zfgw_datastream
+        test_zfgw_datastream.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/zfgw_datastream.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/zfgw_channel_manager.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/zfgw_channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/zfgw_segment.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/zfgw_pack.cpp
+    )
+    target_compile_definitions(test_zfgw_datastream PRIVATE
+        USE_GTEST_MAIN __LINUX__ ZDP OBJECT_MONITOR
+    )
+    target_link_libraries(test_zfgw_datastream PRIVATE
+        ${ZCE_DEPS}
+        GTest::gtest GTest::gtest_main
+        ssl crypto bz2 uv uuid z dl rt m
+    )
+    add_test(NAME ZfgwDataStreamTest COMMAND test_zfgw_datastream)
+endif()
+
 enable_testing()
 add_test(NAME ZfgwSegmentTest COMMAND test_zfgw_segment)

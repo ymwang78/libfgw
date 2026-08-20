@@ -165,14 +165,21 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         if (hdr.isHello()) {
             FgwHello hello;
             if (zce::zdp::zds_unpack(hello, frame + hr, (int)hdr.payload_len,
-                                     nullptr, true) >= 0) {
+                                     nullptr, true) < 0) {
+                ZCE_ERROR((ZLOG_WARNI, "fgw: channel %u bad hello payload", ch->channelId()));
+            } else if (hello.proto_version != kFgwProtoVersion) {
+                // Incompatible peer: do not apply identity — the link cannot be
+                // trusted to speak our framing/routing. Leave it unidentified.
+                ZCE_ERROR((ZLOG_WARNI,
+                           "fgw: channel %u hello proto_version %u unsupported (want %u), ignoring",
+                           ch->channelId(), (unsigned)hello.proto_version,
+                           (unsigned)kFgwProtoVersion));
+            } else {
                 ch->setPeerIdentity(hello.channel_id, hello.ingress_id, hello.outport_id);
                 ZCE_DEBUG((ZLOG_TRACE,
                            "fgw: channel %u hello peer(ch=%u ing=%u out=%u role=%u)",
                            ch->channelId(), hello.channel_id, hello.ingress_id,
                            hello.outport_id, (unsigned)hello.role));
-            } else {
-                ZCE_ERROR((ZLOG_WARNI, "fgw: channel %u bad hello payload", ch->channelId()));
             }
             pos += (size_t)total;
             continue;

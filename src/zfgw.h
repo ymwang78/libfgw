@@ -15,6 +15,10 @@ namespace zfgw {
 /// Pass to `DataStream::{sendSessionData,closeSession}(…, ingress_key)` to use
 /// `FgwConfig.ingress_id` as the session map key / wire ingress (Inport side).
 inline constexpr zce_uint32 kFgwWireIngressUseLocal = 0xFFFFFFFFu;
+
+/// Wire protocol version advertised in FgwHello.proto_version. The receiver
+/// rejects a handshake whose version it does not understand.
+inline constexpr zce_uint16 kFgwProtoVersion = 2;
 }  // namespace zfgw
 
 /// libfgw module-level error codes (range 0x83040000 - 0x8304FFFF).

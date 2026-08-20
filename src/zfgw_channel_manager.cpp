@@ -262,7 +262,7 @@ zce::SmartPtr<IFgwChannel> ChannelManager::makeAcceptedChannel() {
 void ChannelManager::sendHello(IFgwChannel* ch) {
     if (!ch) return;
     FgwHello hello;
-    hello.proto_version = 2;
+    hello.proto_version = kFgwProtoVersion;
     hello.role       = config_.role;
     hello.ingress_id = config_.ingress_id;
     hello.outport_id = 0;  // per-segment routing carries the egress selector
