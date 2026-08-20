@@ -21,6 +21,7 @@ struct struct_utp_context;
 namespace zfgw {
 
 class DataStream;
+// fgwLinkStalled() lives in zfgw_channel.h (shared with IFgwChannel::evaluateStall).
 
 // ─── UDP + libutp context holder ────────────────────────────────────────────
 //
@@ -136,6 +137,11 @@ class ChannelManager : public zce::Object {
     zce::SmartPtr<IFgwChannel> makeAcceptedChannel();
     /// Send the FgwHello handshake on a freshly-connected dialed channel.
     void sendHello(IFgwChannel* ch);
+
+    /// Heartbeat: periodic keepalive + stall detection over all channels.
+    void startHeartbeat();
+    void onHeartbeatTick();
+    void sendHeartbeat(IFgwChannel* ch);
 
     zce::SmartPtr<zce::Reactor>                    reactor_;
     zce::TaskQueue*                                sync_queue_ = nullptr;

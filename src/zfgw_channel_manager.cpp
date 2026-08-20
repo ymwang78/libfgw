@@ -185,6 +185,7 @@ int ChannelManager::start(const FgwConfig& cfg) {
             ZCE_ERROR((ZLOG_ERROR, "fgw: addChannel %u failed, ret=0x%x", ccfg.channel_id, ret));
         }
     }
+    startHeartbeat();
     return 0;
 }
 
@@ -288,6 +289,60 @@ void ChannelManager::sendHello(IFgwChannel* ch) {
     ch->sendBytes(frame, (zce_uint32)wrote);
 }
 
+// ─── Heartbeat / stall detection ─────────────────────────────────────────────
+void ChannelManager::startHeartbeat() {
+    // Guard against a double start() — cancel any timer we already hold.
+    if (heartbeat_timer_) {
+        heartbeat_timer_->cancel();
+        heartbeat_timer_ = nullptr;
+    }
+    unsigned interval = config_.heartbeat_interval > 0 ? (unsigned)config_.heartbeat_interval : 5;
+    zce::SmartPtr<ChannelManager> self(this);
+    heartbeat_timer_ = reactor_->scheduleTimer(zce::SmartPtr<zce::TaskQueue>(sync_queue_),
+                                               (int)interval * 1000, /*repeat*/ true,
+                                               [self](zce::Timer*) { self->onHeartbeatTick(); });
+}
+
+void ChannelManager::sendHeartbeat(IFgwChannel* ch) {
+    if (!ch) return;
+    FgwSegmentHeader hdr;
+    hdr.flags       = FgwSegmentHeader::FLAG_HEARTBEAT;
+    hdr.payload_len = 0;
+    hdr.session_id  = 0;
+    hdr.seq_num     = 0;
+    hdr.ingress_id  = config_.ingress_id;
+
+    zce_byte frame[64];
+    int wrote = fgwSegmentEncode(frame, (int)sizeof(frame), hdr, nullptr, 0);
+    if (wrote < 0) return;
+    ch->sendBytes(frame, (zce_uint32)wrote);
+}
+
+void ChannelManager::onHeartbeatTick() {
+    std::vector<FgwChannelPtr> chans;
+    unsigned link_timeout_ms;
+    {
+        zce::Guard<zce::Mutex> g(lock_);
+        for (auto& kv : channels_) if (kv.second) chans.push_back(kv.second);
+        link_timeout_ms = (config_.link_timeout > 0 ? (unsigned)config_.link_timeout : 15) * 1000;
+    }
+
+    for (auto& ch : chans) {
+        if (!ch->isConnected()) continue;
+        sendHeartbeat(ch.get());
+        // Stall detection: TCP still open but silent past link_timeout. Sampling
+        // `now`, reading last_rx_tick, and writing stalled_ all happen inside
+        // evaluateStall() under the receive lock, so a concurrent addRecvBytes()
+        // recovery can neither be overwritten nor make the delta underflow.
+        const bool was_stalled = ch->isStalled();
+        ch->evaluateStall(link_timeout_ms);
+        if (ch->isStalled() != was_stalled) {
+            ZCE_DEBUG((ZLOG_INFOR, "fgw: channel %u %s", ch->channelId(),
+                       ch->isStalled() ? "STALLED (no rx)" : "recovered"));
+        }
+    }
+}
+
 int ChannelManager::addChannel(const FgwChannelConfig& cfg) {
     zce::Guard<zce::Mutex> g(lock_);
     if (channels_.count(cfg.channel_id)) {
@@ -346,7 +401,7 @@ std::vector<FgwChannelPtr> ChannelManager::liveChannels() const {
     std::vector<FgwChannelPtr> out;
     out.reserve(channels_.size());
     for (const auto& kv : channels_) {
-        if (kv.second && kv.second->isConnected()) {
+        if (kv.second && kv.second->isLive()) {
             out.push_back(kv.second);
         }
     }

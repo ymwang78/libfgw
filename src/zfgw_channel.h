@@ -16,6 +16,7 @@
 #include <zce/zce_object.h>
 #include <zce/zce_reactor.h>
 #include <zce/zce_types.h>
+#include <atomic>
 #include <functional>
 #include <string>
 #include "zfgw_proto.h"
@@ -51,6 +52,16 @@ struct LinkQuality {
     zce_uint32 last_rx_tick = 0;
 };
 
+/// Pure stall-decision used by the heartbeat check (extracted for testability):
+/// a link is stalled when nothing has been received within timeout_ms. The
+/// receive clock is baselined at connect time (IFgwChannel::markConnected), so
+/// a link that comes up but is blackholed still stalls after one link_timeout.
+/// All values are zce_tick() milliseconds; the subtraction is unsigned so it is
+/// correct across tick wraparound.
+inline bool fgwLinkStalled(zce_uint32 now_tick, zce_uint32 last_rx_tick, zce_uint32 timeout_ms) {
+    return (now_tick - last_rx_tick) > timeout_ms;
+}
+
 /// Interface implemented by every link-channel type.
 ///
 /// A channel is owned by a DataStream (SmartPtr).  Bytes delivered
@@ -75,6 +86,11 @@ class IFgwChannel : virtual public zce::Object {
     /// than dialed; accepted channels are not auto-reconnected and do not
     /// send the initiating Hello (the dialing peer does).
     bool              accepted_ = false;
+    /// Set by the ChannelManager heartbeat check when the link has gone silent
+    /// (TCP still open but no bytes for link_timeout). A stalled link is kept
+    /// but excluded from live selection until traffic resumes. Atomic: written
+    /// by the heartbeat/recv paths, read by selection on other threads.
+    std::atomic<bool> stalled_{false};
     /// Peer identity learned from the FgwHello handshake (0 until received).
     zce_uint32        peer_channel_id_ = 0;
     zce_uint32        peer_ingress_id_ = 0;
@@ -96,6 +112,29 @@ class IFgwChannel : virtual public zce::Object {
     ZFGW_CHANNEL_KIND  kind()       const { return kind_; }
     zce_uint32         priority()   const { return priority_; }
     bool               isConnected() const { return connected_; }
+
+    /// Liveness: connected AND not marked stalled by the heartbeat check.
+    /// Selection uses this so a silent (GFW-stalled) link is skipped.
+    bool               isLive()     const { return connected_ && !stalled_; }
+    bool               isStalled()  const { return stalled_; }
+    void               markStalled(bool v) { stalled_ = v; }
+    zce_uint32         lastRxTick() const {
+        zce::Guard<zce::Mutex> g(quality_lock_);
+        return quality_.last_rx_tick;
+    }
+
+    /// Heartbeat stall evaluation. Samples the clock, reads last_rx_tick, and
+    /// writes stalled_ all under quality_lock_ — the same section addRecvBytes()
+    /// uses. Sampling `now` inside the lock (not by the caller before the loop)
+    /// guarantees now >= last_rx_tick: any addRecvBytes() that set a newer
+    /// timestamp has already released the lock, so the unsigned (now - last)
+    /// delta can never wrap and mis-stall a just-recovered link.
+    void evaluateStall(zce_uint32 timeout_ms) {
+        zce::Guard<zce::Mutex> g(quality_lock_);
+        const zce_uint32 now = (zce_uint32)zce_tick();
+        stalled_.store(fgwLinkStalled(now, quality_.last_rx_tick, timeout_ms),
+                       std::memory_order_relaxed);
+    }
 
     bool               isAccepted() const { return accepted_; }
     void               markAccepted()     { accepted_ = true; }
@@ -139,6 +178,13 @@ class IFgwChannel : virtual public zce::Object {
   protected:
     void markConnected(bool v) {
         connected_ = v;
+        if (v) {
+            // Baseline the receive clock at connect time so a link that comes
+            // up but is blackholed (never receives) still stalls after a full
+            // link_timeout, instead of being treated as forever-fresh.
+            zce::Guard<zce::Mutex> g(quality_lock_);
+            quality_.last_rx_tick = (zce_uint32)zce_tick();
+        }
         if (on_connected_) on_connected_(this, v ? 0 : ZFGW_ERRCODE_CHANNELFAIL);
     }
     void markClosed() {
@@ -150,9 +196,15 @@ class IFgwChannel : virtual public zce::Object {
         quality_.bytes_sent += n;
     }
     void addRecvBytes(zce_uint32 n) {
+        // Traffic resumed: update the receive clock AND clear any stall under
+        // the same lock evaluateStall() uses, so the heartbeat timer cannot
+        // overwrite this recovery with a stale-snapshot stall decision. Clearing
+        // here also makes a recovered link rejoin live selection immediately, so
+        // a synchronous reply to this very frame isn't dropped with NOCHANNEL.
         zce::Guard<zce::Mutex> g(quality_lock_);
         quality_.bytes_recv += n;
         quality_.last_rx_tick = (zce_uint32)zce_tick();
+        stalled_.store(false, std::memory_order_relaxed);
     }
     void noteSegmentSent()    { zce::Guard<zce::Mutex> g(quality_lock_); ++quality_.send_segments; }
     void noteSegmentRecv()    { zce::Guard<zce::Mutex> g(quality_lock_); ++quality_.recv_segments; }

@@ -193,6 +193,13 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
             continue;
         }
 
+        if (hdr.isHeartbeat()) {
+            // Keepalive: the channel's recv path already refreshed liveness.
+            // Carries no session and must bypass dedup.
+            pos += (size_t)total;
+            continue;
+        }
+
         const zce_uint32 rx_ingress = hdr.isHdrExt() ? hdr.ingress_id : 0;
         SessionKey skey(rx_ingress, hdr.session_id);
 

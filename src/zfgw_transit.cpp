@@ -42,6 +42,7 @@ int TransitService::start() {
         ZCE_DEBUG((ZLOG_INFOR, "fgw transit: listening for inports on %s:%u",
                    ip.empty() ? "0.0.0.0" : ip.c_str(), (unsigned)config_.outport_listen_port));
     }
+    startHeartbeat();
     return 0;
 }
 
@@ -50,6 +51,10 @@ void TransitService::stop() {
     std::map<IFgwChannel*, Link> links;
     {
         zce::Guard<zce::Mutex> g(lock_);
+        if (heartbeat_timer_) {
+            heartbeat_timer_->cancel();
+            heartbeat_timer_ = nullptr;
+        }
         acc.swap(acceptor_);
         links.swap(links_);
         outbound_by_outport_.clear();
@@ -181,6 +186,8 @@ void TransitService::onLinkBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint3
                     inbound_by_ingress_[hello.ingress_id] = L.chan;
                 }
             }
+        } else if (hdr.isHeartbeat()) {
+            // Hop-local keepalive: consume, never forward end-to-end.
         } else if (!L.outbound) {
             // From an Inport: learn its ingress and forward by outport_id.
             inbound_by_ingress_[hdr.ingress_id] = L.chan;
@@ -247,6 +254,47 @@ void TransitService::onLinkClosed(IFgwChannel* ch) {
         // re-dialed: the Inport reconnects on its own.
         if (was_outbound && have_outport) self->scheduleOutportRedial(outport_id);
     });
+}
+
+// ─── Hop-local heartbeat (Transit originates on every link) ──────────────────
+void TransitService::startHeartbeat() {
+    if (heartbeat_timer_) {
+        heartbeat_timer_->cancel();
+        heartbeat_timer_ = nullptr;
+    }
+    const unsigned interval = config_.heartbeat_interval > 0 ? (unsigned)config_.heartbeat_interval : 5;
+    zce::SmartPtr<TransitService> self(this);
+    heartbeat_timer_ = reactor_->scheduleTimer(zce::SmartPtr<zce::TaskQueue>(sync_queue_),
+                                               (int)interval * 1000, /*repeat*/ true,
+                                               [self](zce::Timer*) { self->onHeartbeatTick(); });
+}
+
+void TransitService::sendHeartbeat(IFgwChannel* ch) {
+    if (!ch) return;
+    FgwSegmentHeader hdr;
+    hdr.flags       = FgwSegmentHeader::FLAG_HEARTBEAT;
+    hdr.payload_len = 0;
+    hdr.session_id  = 0;
+    hdr.seq_num     = 0;
+    hdr.ingress_id  = config_.ingress_id;
+
+    zce_byte frame[64];
+    int wrote = fgwSegmentEncode(frame, (int)sizeof(frame), hdr, nullptr, 0);
+    if (wrote < 0) return;
+    ch->sendBytes(frame, (zce_uint32)wrote);
+}
+
+void TransitService::onHeartbeatTick() {
+    std::vector<FgwChannelPtr> chans;
+    {
+        zce::Guard<zce::Mutex> g(lock_);
+        for (auto& kv : links_) {
+            if (kv.second.chan) chans.push_back(kv.second.chan);
+        }
+    }
+    for (auto& ch : chans) {
+        if (ch->isConnected()) sendHeartbeat(ch.get());
+    }
 }
 
 }  // namespace zfgw
