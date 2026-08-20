@@ -331,15 +331,15 @@ void ChannelManager::onHeartbeatTick() {
     for (auto& ch : chans) {
         if (!ch->isConnected()) continue;
         sendHeartbeat(ch.get());
-        // Stall detection: TCP still open but silent past link_timeout. last==0
-        // means "nothing received yet" — give a fresh link time, don't stall it.
-        const zce_uint32 last = ch->lastRxTick();
-        const bool stalled = fgwLinkStalled(now, last, link_timeout_ms);
-        if (stalled != ch->isStalled()) {
+        // Stall detection: TCP still open but silent past link_timeout. The
+        // read-decide-write happens inside evaluateStall() under the receive
+        // lock, so a concurrent addRecvBytes() recovery can't be overwritten.
+        const bool was_stalled = ch->isStalled();
+        ch->evaluateStall(now, link_timeout_ms);
+        if (ch->isStalled() != was_stalled) {
             ZCE_DEBUG((ZLOG_INFOR, "fgw: channel %u %s", ch->channelId(),
-                       stalled ? "STALLED (no rx)" : "recovered"));
+                       ch->isStalled() ? "STALLED (no rx)" : "recovered"));
         }
-        ch->markStalled(stalled);
     }
 }
 

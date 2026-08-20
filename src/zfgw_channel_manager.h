@@ -21,16 +21,7 @@ struct struct_utp_context;
 namespace zfgw {
 
 class DataStream;
-
-/// Pure stall-decision used by the heartbeat check (extracted for testability):
-/// a link is stalled when nothing has been received within timeout_ms. The
-/// receive clock is baselined at connect time (IFgwChannel::markConnected), so
-/// a link that comes up but is blackholed still stalls after one link_timeout.
-/// All values are zce_tick() milliseconds; the subtraction is unsigned so it is
-/// correct across tick wraparound.
-inline bool fgwLinkStalled(zce_uint32 now_tick, zce_uint32 last_rx_tick, zce_uint32 timeout_ms) {
-    return (now_tick - last_rx_tick) > timeout_ms;
-}
+// fgwLinkStalled() lives in zfgw_channel.h (shared with IFgwChannel::evaluateStall).
 
 // ─── UDP + libutp context holder ────────────────────────────────────────────
 //
