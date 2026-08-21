@@ -88,7 +88,7 @@ int ZfgwMachine::doBringup() {
             return ret;
         }
     } else if (config_.role == ZFGW_ROLE_OUTPORT) {
-        outport_ = new OutportService(reactor, stream_, config_.egress_bind_ip);
+        outport_ = new OutportService(reactor, stream_);
         ret = outport_->start();
         if (ret < 0) {
             doTeardown();

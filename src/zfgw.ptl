@@ -13,6 +13,14 @@
     /*  written pack appended `ingress_id` at the LAST bit; zgen places   */
     /*  it by declaration order (bit 1). FgwConfig's persisted config.zds */
     /*  is thus NOT compatible with the pre-zgen format — regenerate.     */
+    /*                                                                    */
+    /*  NOTE: v0.3.0 REMOVED FgwConfig.egress_bind_ip (was bit 5). It was */
+    /*  accepted but never applied — source-IP selection belongs to the   */
+    /*  host routing table, and egress stability already comes from       */
+    /*  session affinity (a session is pinned to one Outport). This is a  */
+    /*  deliberate, one-off break of the append-only rule: every field    */
+    /*  after it shifts down one bit, so any config.zds written before    */
+    /*  v0.3.0 MUST be regenerated. Do not take it as precedent.          */
     /* ================================================================== */
 
     /* ------------------------------------------------------------------ */
@@ -41,7 +49,6 @@
         uint16  inport_listen_port = 1080     /* SOCKS5 local listen port on Inport */;
         astring outport_listen_host           /* listen ip for Outport side */;
         uint16  outport_listen_port = 0       /* listen port for Outport side */;
-        astring egress_bind_ip                /* fixed egress ip on Outport side */;
         struct FgwChannelConfig channels[~]   /* pre-configured channels */;
         uint16  segment_size = 1200           /* payload size per segment */;
         uint16  recv_window = 1024            /* receive window size (segments) */;

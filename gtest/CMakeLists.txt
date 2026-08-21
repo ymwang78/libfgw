@@ -60,6 +60,7 @@ if(EXISTS ${ZCE_LIB})
     target_link_libraries(test_zfgw_pack PRIVATE
         ${ZCE_DEPS}
         GTest::gtest GTest::gtest_main
+        ssl crypto bz2 uv uuid z dl rt m
     )
     add_test(NAME ZfgwPackTest COMMAND test_zfgw_pack)
 endif()

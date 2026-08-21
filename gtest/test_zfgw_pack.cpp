@@ -66,7 +66,7 @@ TEST(FgwPackTest, FgwConfigWithChannels) {
     src.role               = 0;
     src.ingress_id         = 42;
     src.inport_listen_port = 1080;
-    src.egress_bind_ip     = "192.168.1.10";
+    src.route_outport_id   = 7;
     src.segment_size       = 1400;
     src.recv_window        = 2048;
     src.heartbeat_interval = 3;

@@ -55,7 +55,6 @@ namespace zfgw
             if (inport_listen_port != _t.inport_listen_port) return false;
             if (outport_listen_host != _t.outport_listen_host) return false;
             if (outport_listen_port != _t.outport_listen_port) return false;
-            if (egress_bind_ip != _t.egress_bind_ip) return false;
             if (!(channels == _t.channels)) return false;
             if (segment_size != _t.segment_size) return false;
             if (recv_window != _t.recv_window) return false;
@@ -73,7 +72,6 @@ namespace zfgw
         zce_uint16    inport_listen_port = 1080/* SOCKS5 local listen port on Inport */;
         zce_astring    outport_listen_host/* listen ip for Outport side */;
         zce_uint16    outport_listen_port = 0/* listen port for Outport side */;
-        zce_astring    egress_bind_ip/* fixed egress ip on Outport side */;
         std::vector<zfgw::FgwChannelConfig> channels/* pre-configured channels */;
         zce_uint16    segment_size = 1200/* payload size per segment */;
         zce_uint16    recv_window = 1024/* receive window size (segments) */;

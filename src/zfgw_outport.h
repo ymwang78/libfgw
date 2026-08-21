@@ -83,8 +83,7 @@ using FgwRelaySessionPtr = zce::SmartPtr<FgwRelaySession>;
 /// OutportService — owns the DataStream's server side + its per-session relays.
 class OutportService : public zce::Object {
   public:
-    OutportService(const zce::SmartPtr<zce::Reactor>& reactor, const DataStreamPtr& stream,
-                   const std::string& egress_bind_ip);
+    OutportService(const zce::SmartPtr<zce::Reactor>& reactor, const DataStreamPtr& stream);
     ~OutportService() override;
 
     int start();
@@ -100,7 +99,6 @@ class OutportService : public zce::Object {
     std::vector<FgwRelaySessionPtr> snapshotSessions() const;
 
     const zce::SmartPtr<zce::Reactor>& reactor() const { return reactor_; }
-    const std::string& egressIp() const { return egress_bind_ip_; }
     const DataStreamPtr& dataStream() const { return stream_; }
 
     /// Called by the server-side channels (accepted by a listener or
@@ -119,7 +117,6 @@ class OutportService : public zce::Object {
   private:
     zce::SmartPtr<zce::Reactor>                 reactor_;
     DataStreamPtr                               stream_;
-    std::string                                 egress_bind_ip_;
     mutable zce::Mutex                          lock_;
     std::map<RelaySessionKey, FgwRelaySessionPtr> sessions_;
 };
