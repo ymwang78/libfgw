@@ -300,18 +300,29 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
                 it = sessions_.find(skey);
             }
             {
-                zce::RefBlock payload;
-                ZCE_MBACQUIRE(payload, (int)hdr.payload_len);
-                if ((int)payload.space() >= (int)hdr.payload_len) {
-                    std::memcpy(payload.wr_ptr_cow(), frame + hr, hdr.payload_len);
-                    payload.wr_ptr(hdr.payload_len);
-                    it->second.rx_buffer.emplace(hdr.seq_num, std::move(payload));
+                // Receive-window guard: only buffer segments whose seq falls in
+                // [expected, expected + recv_window). The unsigned delta folds
+                // both "too old" (already delivered/deduped; wraps huge) and "too
+                // far ahead" (would grow rx_buffer without bound) into one check,
+                // so malformed / heavily-reordered / malicious traffic can't
+                // exhaust memory. Without a retransmit layer a dropped in-window
+                // gap stalls delivery, which is the intended fail-safe.
+                const zce_uint32 rel = hdr.seq_num - it->second.expected_rx_seq;
+                if (rel >= recv_window_) {
+                    ZCE_ERROR((ZLOG_WARNI,
+                               "fgw: session %u seq %u outside recv window [%u,+%u), dropped",
+                               hdr.session_id, hdr.seq_num, it->second.expected_rx_seq,
+                               (unsigned)recv_window_));
+                } else {
+                    zce::RefBlock payload;
+                    ZCE_MBACQUIRE(payload, (int)hdr.payload_len);
+                    if ((int)payload.space() >= (int)hdr.payload_len) {
+                        std::memcpy(payload.wr_ptr_cow(), frame + hr, hdr.payload_len);
+                        payload.wr_ptr(hdr.payload_len);
+                        it->second.rx_buffer.emplace(hdr.seq_num, std::move(payload));
+                    }
+                    deliverInOrder(it->second);
                 }
-                if (it->second.rx_buffer.size() > recv_window_) {
-                    ZCE_ERROR((ZLOG_WARNI, "fgw: session %u rx window overflow",
-                               hdr.session_id));
-                }
-                deliverInOrder(it->second);
             }
         }
         pos += (size_t)total;

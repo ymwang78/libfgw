@@ -290,6 +290,33 @@ TEST(FgwDataStreamTest, DuplicateDataDeliveredOnce) {
     EXPECT_EQ(handler.bytes, "ABCD");
 }
 
+// rx_buffer must stay bounded by recv_window: out-of-window segments (a stalled
+// gap plus a long reordered/malicious run) are dropped instead of buffered.
+TEST(FgwDataStreamTest, RecvWindowBounded) {
+    zce::SmartPtr<ChannelManager> no_manager;
+    DataStream ds(no_manager, /*ingress*/ 0, 1200, /*recv_window*/ 4, /*verify_crc*/ true);
+    CaptureHandler handler;
+    ds.setUnknownSessionCallback(
+        [&](zce_uint32, zce_uint32) -> ISessionHandler* { return &handler; });
+    MockChannel ch(1);
+
+    auto syn = makeSegment(FgwSegmentHeader::FLAG_SYN, 0, /*session*/ 1, 0, "");
+    ds.onChannelBytes(&ch, syn.data(), (zce_uint32)syn.size());
+
+    // seq 0 is missing; feed DATA 1..10. Window [0,4) buffers only 1,2,3; the
+    // rest are dropped, so rx_buffer never exceeds the window.
+    for (zce_uint32 seq = 1; seq <= 10; ++seq) {
+        auto d = makeSegment(FgwSegmentHeader::FLAG_DATA, 0, 1, seq, "x");
+        ds.onChannelBytes(&ch, d.data(), (zce_uint32)d.size());
+    }
+    EXPECT_EQ(handler.bytes, "");  // nothing deliverable yet (seq 0 missing)
+
+    // seq 0 arrives -> deliver 0,1,2,3, then stall at 4 (dropped by the cap).
+    auto d0 = makeSegment(FgwSegmentHeader::FLAG_DATA, 0, 1, 0, "0");
+    ds.onChannelBytes(&ch, d0.data(), (zce_uint32)d0.size());
+    EXPECT_EQ(handler.bytes, "0xxx");
+}
+
 // LinkSelector explore/exploit: primary (exploit) + one rotating probe (explore).
 TEST(FgwLinkSelectorTest, ExploreExploitDualSend) {
     LinkSelector sel;  // default WEIGHTED = explore/exploit
