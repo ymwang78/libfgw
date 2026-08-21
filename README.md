@@ -67,7 +67,7 @@ Inport / FgwSession  ── raw bytes ──┐
 ```text
 role               = 0 (Inport) | 1 (Outport)
 inport_listen_port = 1080
-egress_bind_ip     = "1.2.3.4"          // Outport 固定出口
+route_outport_id   = 0                  // Inport: 0=直连，非0=经 Transit 转发到该出口
 segment_size       = 1200
 recv_window        = 1024
 heartbeat_interval = 5                  // seconds
@@ -120,9 +120,9 @@ HostVM 启动后会通过 `VirtualMachineRegister` 查找 `"fgw"` 类型虚拟�
 - `FgwUtpChannel` 目前为桩实现，开启 `FGW_USE_LIBUTP` 后需要补齐 `utp_init` /
   `utp_create_socket` / `utp_connect` / `utp_issue_deferred_acks` 的完整
   调用链。
-- `egress_bind_ip` 在 `zfgw_outport.cpp` 内对应的 `zce::Tcp` 绑定逻辑当前依赖
-  宿主 `uv_tcp_bind` — 需要在 `libzce` 中暴露 bind 接口或使用 `zce::Acceptor`
-  的反向绑定能力。
+- 出口源 IP **不由本库绑定**：`egress_bind_ip` 已移除。出口稳定性来自会话粘性
+  （一个会话终生固定在同一个 Outport），源地址由宿主机路由表决定；需要在多个
+  本机 IP 间选择的场景请用策略路由。
 - Outport listening（被动接收来自 Inport 的 UTP/TCP 链路）尚未在
   `InportService` / `OutportService` 中提供自动对称构建，目前由
   `FgwConfig.channels` 主动 dial。

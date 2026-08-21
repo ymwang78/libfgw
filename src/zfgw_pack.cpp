@@ -161,6 +161,7 @@ int zce::zdp::zds_pack(zce_byte* buf, int size, const zfgw::FgwConfig& _t, zds_c
     if (!zdp::is_empty_member(_t.multipath_mode)) _struct_prefix |= 1ull << 11; 
     if (!zdp::is_empty_member(_t.enable_crc)) _struct_prefix |= 1ull << 12; 
     if (!zdp::is_empty_member(_t.route_outport_id)) _struct_prefix |= 1ull << 13; 
+    if (!zdp::is_empty_member(_t.config_version)) _struct_prefix |= 1ull << 14; 
     len = zds_pack_struct_header(buf, size, _struct_prefix, ctx, has_prefix);
     CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
@@ -230,6 +231,11 @@ int zce::zdp::zds_pack(zce_byte* buf, int size, const zfgw::FgwConfig& _t, zds_c
     };
     if (_struct_prefix & (1ull << 13)) {
         len = zds_pack_builtin(buf, size,  _t.route_outport_id, ctx);
+        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
+
+    };
+    if (_struct_prefix & (1ull << 14)) {
+        len = zds_pack_builtin(buf, size,  _t.config_version, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
@@ -327,7 +333,13 @@ int zce::zdp::zds_unpack(zfgw::FgwConfig& _t, const zce_byte* buf, int size, zds
     } else {
         _t.route_outport_id = {};
     };
-    _struct_prefix >>= 14;
+    if (_struct_prefix & (1ull << 14)) {
+        len = zds_unpack_builtin(_t.config_version, buf, size, ctx);
+        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
+    } else {
+        _t.config_version = {};
+    };
+    _struct_prefix >>= 15;
     while (_struct_prefix != 0) {
         if (_struct_prefix & 1) {
             len = zds_unpack_skip(buf, size, ctx);

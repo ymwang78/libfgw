@@ -5,8 +5,10 @@
 //  DataStream from a peer Inport.  Every session is expected to carry
 //  a standard SOCKS5 handshake followed by the actual payload; the
 //  Outport speaks SOCKS5 itself and, on successful negotiation, dials
-//  out to the requested target using a zce::Tcp pinned to the
-//  operator-configured egress IP ("fixed egress").
+//  out to the requested target with a zce::Tcp.  Egress stability comes
+//  from session affinity — a session is pinned to one Outport for its
+//  lifetime — while the source address itself is chosen by the host's
+//  routing table.
 //
 //  Yongming Wang(wangym@gmail.com)
 //  Copyright (C) 2026 - All Rights Reserved

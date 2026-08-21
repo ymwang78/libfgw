@@ -61,6 +61,11 @@
            Transit can fan out to the right Outport. 0 = direct (no routing,
            emit Extended headers). Appended at end to keep the ZDS layout stable. */
         uint32  route_outport_id = 0;
+        /* Schema guard. Writers stamp kFgwConfigVersion; a loader that reads
+           anything else (including 0 = field absent, i.e. any pre-v0.3.0 file)
+           rejects the config instead of decoding it under the wrong field
+           numbering. Default MUST stay 0 so "absent" stays distinguishable. */
+        uint32  config_version = 0;
     };
 
     /* ------------------------------------------------------------------ */

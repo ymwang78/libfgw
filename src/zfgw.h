@@ -19,6 +19,18 @@ inline constexpr zce_uint32 kFgwWireIngressUseLocal = 0xFFFFFFFFu;
 /// Wire protocol version advertised in FgwHello.proto_version. The receiver
 /// rejects a handshake whose version it does not understand.
 inline constexpr zce_uint16 kFgwProtoVersion = 2;
+
+/// Schema version stamped into FgwConfig.config_version by every writer.
+/// The high bits carry the 0xF6 frame magic so a value inherited from an older
+/// layout (where this bit position held route_outport_id) cannot be mistaken
+/// for a valid version; the low bits are the schema revision.
+/// v3 = egress_bind_ip removed (field numbering shifted); see zfgw.ptl.
+inline constexpr zce_uint32 kFgwConfigVersion = 0xF6C00003u;
+
+/// True when a decoded FgwConfig carries the layout this build understands.
+/// 0 means the field was absent — i.e. a pre-v0.3.0 file whose bits 5+ mean
+/// different fields; decoding it further would silently corrupt settings.
+inline bool fgwConfigVersionOk(zce_uint32 v) { return v == kFgwConfigVersion; }
 }  // namespace zfgw
 
 /// libfgw module-level error codes (range 0x83040000 - 0x8304FFFF).
