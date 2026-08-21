@@ -317,6 +317,39 @@ TEST(FgwDataStreamTest, RecvWindowBounded) {
     EXPECT_EQ(handler.bytes, "0xxx");
 }
 
+// A segment rejected by the receive window must NOT be recorded in the dedup
+// table: once the window advances to cover that seq, a delayed multipath copy
+// has to be accepted. Recording it early would reject the copy as a duplicate
+// and stall the session forever — defeating the redundancy of dual-send.
+TEST(FgwDataStreamTest, OutOfWindowDropIsNotDeduped) {
+    zce::SmartPtr<ChannelManager> no_manager;
+    DataStream ds(no_manager, /*ingress*/ 0, 1200, /*recv_window*/ 4, /*verify_crc*/ true);
+    CaptureHandler handler;
+    ds.setUnknownSessionCallback(
+        [&](zce_uint32, zce_uint32) -> ISessionHandler* { return &handler; });
+    MockChannel ch(1);
+
+    auto syn = makeSegment(FgwSegmentHeader::FLAG_SYN, 0, /*session*/ 1, 0, "");
+    ds.onChannelBytes(&ch, syn.data(), (zce_uint32)syn.size());
+
+    // Early copy of seq 4 while the window is [0,4) -> dropped as out-of-window.
+    auto d4 = makeSegment(FgwSegmentHeader::FLAG_DATA, 0, 1, 4, "E");
+    ds.onChannelBytes(&ch, d4.data(), (zce_uint32)d4.size());
+    EXPECT_EQ(handler.bytes, "");
+
+    // Fill 0..3; the window advances to [4,8).
+    for (zce_uint32 seq = 0; seq <= 3; ++seq) {
+        auto d = makeSegment(FgwSegmentHeader::FLAG_DATA, 0, 1, seq, "a");
+        ds.onChannelBytes(&ch, d.data(), (zce_uint32)d.size());
+    }
+    EXPECT_EQ(handler.bytes, "aaaa");
+
+    // A delayed multipath copy of seq 4 now arrives — it must be delivered, not
+    // rejected as a duplicate of the earlier out-of-window drop.
+    ds.onChannelBytes(&ch, d4.data(), (zce_uint32)d4.size());
+    EXPECT_EQ(handler.bytes, "aaaaE");
+}
+
 // LinkSelector explore/exploit: primary (exploit) + one rotating probe (explore).
 TEST(FgwLinkSelectorTest, ExploreExploitDualSend) {
     LinkSelector sel;  // default WEIGHTED = explore/exploit
