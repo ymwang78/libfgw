@@ -184,10 +184,19 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
                            (unsigned)kFgwProtoVersion));
             } else {
                 ch->setPeerIdentity(hello.channel_id, hello.ingress_id, hello.outport_id);
+                // A changed peer generation means the peer restarted: its epoch
+                // sequence restarts from 1, so reset our comparison state (and the
+                // now-stale race stats) rather than discarding the fresh feedback.
+                if (hello.generation != 0 && hello.generation != peer_generation_) {
+                    peer_generation_ = hello.generation;
+                    applied_epoch_   = 0;
+                    peer_win_count_.clear();
+                    peer_part_count_.clear();
+                }
                 ZCE_DEBUG((ZLOG_TRACE,
-                           "fgw: channel %u hello peer(ch=%u ing=%u out=%u role=%u)",
+                           "fgw: channel %u hello peer(ch=%u ing=%u out=%u role=%u gen=%u)",
                            ch->channelId(), hello.channel_id, hello.ingress_id,
-                           hello.outport_id, (unsigned)hello.role));
+                           hello.outport_id, (unsigned)hello.role, hello.generation));
             }
             pos += (size_t)total;
             continue;
@@ -196,6 +205,23 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         if (hdr.isHeartbeat()) {
             // Keepalive: the channel's recv path already refreshed liveness.
             // Carries no session and must bypass dedup.
+            pos += (size_t)total;
+            continue;
+        }
+
+        if (hdr.isAck()) {
+            // Racing feedback from the peer: adopt the recommended primary if
+            // the decision is newer than the last one we applied (epoch wins).
+            FgwLinkFeedback fb;
+            if (zce::zdp::zds_unpack(fb, frame + hr, (int)hdr.payload_len, nullptr, true) >= 0 &&
+                fb.decision_epoch > applied_epoch_) {
+                applied_epoch_ = fb.decision_epoch;
+                if (manager_ && fb.recommended_primary != 0) {
+                    manager_->selector().setPrimaryChannel(fb.recommended_primary);
+                    ZCE_DEBUG((ZLOG_TRACE, "fgw: applied feedback epoch=%u primary=%u",
+                               fb.decision_epoch, fb.recommended_primary));
+                }
+            }
             pos += (size_t)total;
             continue;
         }
@@ -209,6 +235,10 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         dk.seq     = hdr.seq_num;
         dk.kind    = hdr.isSyn() ? 1 : (hdr.isFin() ? 2 : 0);
         if (dedup_map_.count(dk)) {
+            // A duplicate copy arrived after the winner — this channel raced but
+            // lost. Count the participation (denominator of its win-rate).
+            const zce_uint32 lpc = ch->peerChannelId();
+            if (lpc != 0) ++peer_part_count_[lpc];
             pos += (size_t)total;
             continue;
         }
@@ -217,6 +247,13 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         if (dedup_queue_.size() > kDedupRing) {
             dedup_map_.erase(dedup_queue_.front());
             dedup_queue_.pop_front();
+        }
+
+        // Arrival-order race: this channel delivered (ingress,session,seq)
+        // before any duplicate — it won and participated.
+        {
+            const zce_uint32 pc = ch->peerChannelId();
+            if (pc != 0) { ++peer_win_count_[pc]; ++peer_part_count_[pc]; }
         }
 
         auto it = sessions_.find(skey);
@@ -306,6 +343,71 @@ void DataStream::deliverInOrder(SessionState& state) {
             handler->onSessionData(this, sid, blk.rd_ptr(), (zce_uint32)blk.length());
         }
     }
+}
+
+zce_uint32 DataStream::pickPrimaryLocked() const {
+    zce_uint32 best_id = 0, best_part = 0;
+    double     best_rate = -1.0;
+    for (const auto& kv : peer_part_count_) {
+        if (kv.second == 0) continue;
+        auto wit = peer_win_count_.find(kv.first);
+        const zce_uint32 wins = (wit == peer_win_count_.end()) ? 0 : wit->second;
+        const double rate = (double)wins / (double)kv.second;
+        // Highest win-rate wins; break ties by the larger sample (more races).
+        if (rate > best_rate || (rate == best_rate && kv.second > best_part)) {
+            best_rate = rate;
+            best_id   = kv.first;
+            best_part = kv.second;
+        }
+    }
+    return best_id;
+}
+
+zce_uint32 DataStream::recommendedPrimary() const {
+    zce::Guard<zce::Mutex> g(lock_);
+    return pickPrimaryLocked();
+}
+
+void DataStream::emitFeedback() {
+    FgwLinkFeedback fb;
+    {
+        zce::Guard<zce::Mutex> g(lock_);
+        if (peer_part_count_.empty()) return;
+        const zce_uint32 best_id = pickPrimaryLocked();
+        // Exponential decay so recent races dominate the next decision.
+        for (auto& kv : peer_win_count_)  kv.second >>= 1;
+        for (auto& kv : peer_part_count_) kv.second >>= 1;
+        if (best_id == 0) return;
+        fb.decision_epoch      = ++feedback_epoch_;
+        fb.recommended_primary = best_id;
+        fb.alive_bitmap        = 0;  // reserved (per-channel liveness)
+        fb.highest_seq         = 0;  // reserved (retransmit / flow control)
+    }
+
+    zce_byte payload[64];
+    int plen = zce::zdp::zds_pack(payload, (int)sizeof(payload), fb, nullptr, true);
+    if (plen < 0) return;
+
+    FgwSegmentHeader hdr;
+    hdr.flags       = FgwSegmentHeader::FLAG_ACK;
+    hdr.payload_len = (zce_uint16)plen;
+    hdr.session_id  = 0;
+    hdr.seq_num     = 0;
+    hdr.ingress_id  = local_ingress_id_;
+
+    zce_byte frame[128];
+    int wrote = fgwSegmentEncode(frame, (int)sizeof(frame), hdr, payload, plen);
+    if (wrote < 0) return;
+
+    // Feed the recommendation back to the peer over every live link (done
+    // outside our lock; sendBytes is self-synchronised).
+    if (!manager_) return;
+    auto live = manager_->liveChannels();
+    for (auto& ch : live) {
+        if (ch) ch->sendBytes(frame, (zce_uint32)wrote);
+    }
+    ZCE_DEBUG((ZLOG_TRACE, "fgw: emit feedback epoch=%u primary=%u",
+               fb.decision_epoch, fb.recommended_primary));
 }
 
 }  // namespace zfgw

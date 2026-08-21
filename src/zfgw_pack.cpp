@@ -955,6 +955,7 @@ int zce::zdp::zds_pack(zce_byte* buf, int size, const zfgw::FgwHello& _t, zds_co
     if (!zdp::is_empty_member(_t.ingress_id)) _struct_prefix |= 1ull << 2; 
     if (!zdp::is_empty_member(_t.outport_id)) _struct_prefix |= 1ull << 3; 
     if (!zdp::is_empty_member(_t.channel_id)) _struct_prefix |= 1ull << 4; 
+    if (!zdp::is_empty_member(_t.generation)) _struct_prefix |= 1ull << 5; 
     len = zds_pack_struct_header(buf, size, _struct_prefix, ctx, has_prefix);
     CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
@@ -980,6 +981,11 @@ int zce::zdp::zds_pack(zce_byte* buf, int size, const zfgw::FgwHello& _t, zds_co
     };
     if (_struct_prefix & (1ull << 4)) {
         len = zds_pack_builtin(buf, size,  _t.channel_id, ctx);
+        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
+
+    };
+    if (_struct_prefix & (1ull << 5)) {
+        len = zds_pack_builtin(buf, size,  _t.generation, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
@@ -1023,7 +1029,13 @@ int zce::zdp::zds_unpack(zfgw::FgwHello& _t, const zce_byte* buf, int size, zds_
     } else {
         _t.channel_id = {};
     };
-    _struct_prefix >>= 5;
+    if (_struct_prefix & (1ull << 5)) {
+        len = zds_unpack_builtin(_t.generation, buf, size, ctx);
+        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
+    } else {
+        _t.generation = {};
+    };
+    _struct_prefix >>= 6;
     while (_struct_prefix != 0) {
         if (_struct_prefix & 1) {
             len = zds_unpack_skip(buf, size, ctx);

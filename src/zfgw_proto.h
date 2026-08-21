@@ -231,6 +231,7 @@ namespace zfgw
             if (ingress_id != _t.ingress_id) return false;
             if (outport_id != _t.outport_id) return false;
             if (channel_id != _t.channel_id) return false;
+            if (generation != _t.generation) return false;
             return true;
         }
 
@@ -239,6 +240,8 @@ namespace zfgw
         zce_uint32    ingress_id/* sender ingress id (reverse-routing key) */;
         zce_uint32    outport_id/* desired egress id (forward-routing key), 0 if N/A */;
         zce_uint32    channel_id/* sender-local channel id */;
+        zce_uint32    generation/* sender process incarnation nonce; a change
+        means the peer restarted -> reset epoch */;
     };
     struct FgwLinkFeedback
     {

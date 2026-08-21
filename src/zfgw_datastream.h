@@ -86,6 +86,15 @@ class DataStream : public zce::Object {
     /// Invoked when raw bytes arrive on a link channel.
     void onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32 len);
 
+    /// Racing arbiter tick (driven by the ChannelManager heartbeat): pick the
+    /// link with the best arrival-race win-rate and feed the recommendation
+    /// back to the peer so it can set that link as its send primary.
+    void emitFeedback();
+
+    /// The peer channel id the arbiter currently favours (highest win-rate),
+    /// or 0 if nothing measured. Exposed for inspection/tests.
+    zce_uint32 recommendedPrimary() const;
+
     /// Unknown session hook — must return a handler and/or nullptr.
     using UnknownSessionCb =
         std::function<ISessionHandler*(zce_uint32 peer_ingress, zce_uint32 session_id)>;
@@ -146,6 +155,22 @@ class DataStream : public zce::Object {
     static constexpr size_t kDedupRing = 4096;
     std::deque<DedupKey>                       dedup_queue_;
     std::map<DedupKey, bool>                   dedup_map_;
+
+    // Racing arbiter state. As the receiver of a multipath leg, this side counts,
+    // per peer channel, how many arrival races it *won* (delivered first) and how
+    // many it *participated* in (delivered a copy — win or dedup-dropped loser).
+    // Comparing by win-RATE (wins/participations), not raw wins, is essential:
+    // the sender's primary races on every segment while each probe races only
+    // when rotated in, so raw win counts favour the incumbent primary and never
+    // converge to a consistently-faster probe.
+    std::map<zce_uint32, zce_uint32>           peer_win_count_;    // peer_channel_id -> wins
+    std::map<zce_uint32, zce_uint32>           peer_part_count_;   // peer_channel_id -> races
+    zce_uint32                                 feedback_epoch_ = 0;  // epoch we emit
+    zce_uint32                                 applied_epoch_  = 0;  // epoch we applied
+    zce_uint32                                 peer_generation_ = 0; // peer incarnation
+
+    /// Highest-win-rate peer channel; assumes lock_ is held.
+    zce_uint32 pickPrimaryLocked() const;
 
     UnknownSessionCb unknown_cb_;
 };

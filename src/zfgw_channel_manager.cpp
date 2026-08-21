@@ -13,6 +13,20 @@
 #include <zce/zce_timer.h>
 #include <algorithm>
 #include <cstring>
+#include <random>
+
+namespace {
+/// Per-process incarnation nonce advertised in FgwHello.generation. A peer that
+/// restarts gets a new value, letting the far side reset its epoch comparison.
+zce_uint32 fgwProcessGeneration() {
+    static const zce_uint32 g = [] {
+        std::random_device rd;
+        zce_uint32 v = static_cast<zce_uint32>(rd());
+        return v == 0 ? 1u : v;  // 0 is reserved for "unknown"
+    }();
+    return g;
+}
+}  // namespace
 
 #if ZFGW_WITH_LIBUTP
 #    include "utp.h"
@@ -288,6 +302,7 @@ void ChannelManager::sendHello(IFgwChannel* ch) {
     hello.ingress_id = config_.ingress_id;
     hello.outport_id = 0;  // per-segment routing carries the egress selector
     hello.channel_id = ch->channelId();
+    hello.generation = fgwProcessGeneration();
 
     zce_byte payload[64];
     int plen = zce::zdp::zds_pack(payload, (int)sizeof(payload), hello, nullptr, true);
@@ -340,10 +355,12 @@ void ChannelManager::sendHeartbeat(IFgwChannel* ch) {
 
 void ChannelManager::onHeartbeatTick() {
     std::vector<FgwChannelPtr> chans;
+    std::vector<DataStream*>   subs;
     unsigned link_timeout_ms;
     {
         zce::Guard<zce::Mutex> g(lock_);
         for (auto& kv : channels_) if (kv.second) chans.push_back(kv.second);
+        subs = bytes_subscribers_;
         link_timeout_ms = (config_.link_timeout > 0 ? (unsigned)config_.link_timeout : 15) * 1000;
     }
 
@@ -360,6 +377,12 @@ void ChannelManager::onHeartbeatTick() {
             ZCE_DEBUG((ZLOG_INFOR, "fgw: channel %u %s", ch->channelId(),
                        ch->isStalled() ? "STALLED (no rx)" : "recovered"));
         }
+    }
+
+    // Drive the racing arbiter on the same cadence: each stream feeds its
+    // measured winner back to the peer.
+    for (auto* ds : subs) {
+        if (ds) ds->emitFeedback();
     }
 }
 
@@ -493,9 +516,10 @@ void ChannelManager::onChannelConnected(IFgwChannel* ch, int errcode) {
     if (errcode >= 0) {
         ZCE_DEBUG((ZLOG_TRACE, "fgw: channel %u connected", ch->channelId()));
         if (on_opened_) on_opened_(this, ch);
-        // The dialing side announces itself first; accepted channels wait for
-        // the peer's Hello instead of sending their own.
-        if (!ch->isAccepted()) sendHello(ch);
+        // Both sides announce their channel id via Hello so each end can map its
+        // links to the peer's ids — needed for symmetric racing feedback (the
+        // recommended primary is expressed in the *sender's* id space).
+        sendHello(ch);
     } else {
         ZCE_ERROR((ZLOG_ERROR, "fgw: channel %u connect failed 0x%x", ch->channelId(), errcode));
     }
