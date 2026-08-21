@@ -132,6 +132,8 @@
         uint32  ingress_id          /* sender ingress id (reverse-routing key) */;
         uint32  outport_id          /* desired egress id (forward-routing key), 0 if N/A */;
         uint32  channel_id          /* sender-local channel id */;
+        uint32  generation          /* sender process incarnation nonce; a change
+                                       means the peer restarted -> reset epoch */;
     };
 
     /* Receiver-arbitrated racing feedback, carried in a FLAG_ACK control

@@ -13,6 +13,20 @@
 #include <zce/zce_timer.h>
 #include <algorithm>
 #include <cstring>
+#include <random>
+
+namespace {
+/// Per-process incarnation nonce advertised in FgwHello.generation. A peer that
+/// restarts gets a new value, letting the far side reset its epoch comparison.
+zce_uint32 fgwProcessGeneration() {
+    static const zce_uint32 g = [] {
+        std::random_device rd;
+        zce_uint32 v = static_cast<zce_uint32>(rd());
+        return v == 0 ? 1u : v;  // 0 is reserved for "unknown"
+    }();
+    return g;
+}
+}  // namespace
 
 #if ZFGW_WITH_LIBUTP
 #    include "utp.h"
@@ -288,6 +302,7 @@ void ChannelManager::sendHello(IFgwChannel* ch) {
     hello.ingress_id = config_.ingress_id;
     hello.outport_id = 0;  // per-segment routing carries the egress selector
     hello.channel_id = ch->channelId();
+    hello.generation = fgwProcessGeneration();
 
     zce_byte payload[64];
     int plen = zce::zdp::zds_pack(payload, (int)sizeof(payload), hello, nullptr, true);

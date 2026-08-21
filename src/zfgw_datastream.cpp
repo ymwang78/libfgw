@@ -184,10 +184,19 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
                            (unsigned)kFgwProtoVersion));
             } else {
                 ch->setPeerIdentity(hello.channel_id, hello.ingress_id, hello.outport_id);
+                // A changed peer generation means the peer restarted: its epoch
+                // sequence restarts from 1, so reset our comparison state (and the
+                // now-stale race stats) rather than discarding the fresh feedback.
+                if (hello.generation != 0 && hello.generation != peer_generation_) {
+                    peer_generation_ = hello.generation;
+                    applied_epoch_   = 0;
+                    peer_win_count_.clear();
+                    peer_part_count_.clear();
+                }
                 ZCE_DEBUG((ZLOG_TRACE,
-                           "fgw: channel %u hello peer(ch=%u ing=%u out=%u role=%u)",
+                           "fgw: channel %u hello peer(ch=%u ing=%u out=%u role=%u gen=%u)",
                            ch->channelId(), hello.channel_id, hello.ingress_id,
-                           hello.outport_id, (unsigned)hello.role));
+                           hello.outport_id, (unsigned)hello.role, hello.generation));
             }
             pos += (size_t)total;
             continue;
@@ -226,6 +235,10 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         dk.seq     = hdr.seq_num;
         dk.kind    = hdr.isSyn() ? 1 : (hdr.isFin() ? 2 : 0);
         if (dedup_map_.count(dk)) {
+            // A duplicate copy arrived after the winner — this channel raced but
+            // lost. Count the participation (denominator of its win-rate).
+            const zce_uint32 lpc = ch->peerChannelId();
+            if (lpc != 0) ++peer_part_count_[lpc];
             pos += (size_t)total;
             continue;
         }
@@ -237,10 +250,10 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
         }
 
         // Arrival-order race: this channel delivered (ingress,session,seq)
-        // before any duplicate — credit its peer-side id for the arbiter.
+        // before any duplicate — it won and participated.
         {
             const zce_uint32 pc = ch->peerChannelId();
-            if (pc != 0) ++peer_win_count_[pc];
+            if (pc != 0) { ++peer_win_count_[pc]; ++peer_part_count_[pc]; }
         }
 
         auto it = sessions_.find(skey);
@@ -332,18 +345,39 @@ void DataStream::deliverInOrder(SessionState& state) {
     }
 }
 
+zce_uint32 DataStream::pickPrimaryLocked() const {
+    zce_uint32 best_id = 0, best_part = 0;
+    double     best_rate = -1.0;
+    for (const auto& kv : peer_part_count_) {
+        if (kv.second == 0) continue;
+        auto wit = peer_win_count_.find(kv.first);
+        const zce_uint32 wins = (wit == peer_win_count_.end()) ? 0 : wit->second;
+        const double rate = (double)wins / (double)kv.second;
+        // Highest win-rate wins; break ties by the larger sample (more races).
+        if (rate > best_rate || (rate == best_rate && kv.second > best_part)) {
+            best_rate = rate;
+            best_id   = kv.first;
+            best_part = kv.second;
+        }
+    }
+    return best_id;
+}
+
+zce_uint32 DataStream::recommendedPrimary() const {
+    zce::Guard<zce::Mutex> g(lock_);
+    return pickPrimaryLocked();
+}
+
 void DataStream::emitFeedback() {
     FgwLinkFeedback fb;
     {
         zce::Guard<zce::Mutex> g(lock_);
-        if (peer_win_count_.empty()) return;
-        zce_uint32 best_id = 0, best_wins = 0;
-        for (const auto& kv : peer_win_count_) {
-            if (kv.second > best_wins) { best_wins = kv.second; best_id = kv.first; }
-        }
+        if (peer_part_count_.empty()) return;
+        const zce_uint32 best_id = pickPrimaryLocked();
         // Exponential decay so recent races dominate the next decision.
-        for (auto& kv : peer_win_count_) kv.second >>= 1;
-        if (best_id == 0 || best_wins == 0) return;
+        for (auto& kv : peer_win_count_)  kv.second >>= 1;
+        for (auto& kv : peer_part_count_) kv.second >>= 1;
+        if (best_id == 0) return;
         fb.decision_epoch      = ++feedback_epoch_;
         fb.recommended_primary = best_id;
         fb.alive_bitmap        = 0;  // reserved (per-channel liveness)

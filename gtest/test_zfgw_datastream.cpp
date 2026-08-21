@@ -145,6 +145,84 @@ std::vector<zce_byte> makeFeedback(zce_uint32 epoch, zce_uint32 primary) {
     return out;
 }
 
+// Encode a FLAG_HELLO segment carrying an FgwHello with the given generation.
+std::vector<zce_byte> makeHello(zce_uint32 generation, zce_uint32 channel_id) {
+    FgwHello h;
+    h.proto_version = kFgwProtoVersion;
+    h.role          = 0;
+    h.ingress_id    = 0;
+    h.outport_id    = 0;
+    h.channel_id    = channel_id;
+    h.generation    = generation;
+    zce_byte payload[64];
+    int plen = zce::zdp::zds_pack(payload, (int)sizeof(payload), h, nullptr, true);
+    EXPECT_GT(plen, 0);
+    FgwSegmentHeader hdr;
+    hdr.flags       = FgwSegmentHeader::FLAG_HELLO;
+    hdr.payload_len = (zce_uint16)plen;
+    std::vector<zce_byte> out(FgwSegmentHeader::HEADER_SIZE + plen + 8);
+    int wrote = fgwSegmentEncode(out.data(), (int)out.size(), hdr, payload, plen);
+    EXPECT_GT(wrote, 0);
+    out.resize(wrote > 0 ? (size_t)wrote : 0);
+    return out;
+}
+
+// Feed one arrival race for a given seq: the winner channel delivers first (a
+// new segment), the loser delivers the duplicate.
+void race(DataStream& ds, MockChannel& winner, MockChannel& loser, zce_uint32 seq) {
+    auto seg = makeSegment(FgwSegmentHeader::FLAG_DATA, 0, /*session*/ 1, seq, "x");
+    ds.onChannelBytes(&winner, seg.data(), (zce_uint32)seg.size());
+    ds.onChannelBytes(&loser, seg.data(), (zce_uint32)seg.size());
+}
+
+// The arbiter must compare links by WIN-RATE, not raw win count: the incumbent
+// primary races on every segment and accrues many wins against weak links, but a
+// consistently-faster probe that races less often must still be recommended.
+TEST(FgwDataStreamTest, RacingUsesWinRateNotCount) {
+    zce::SmartPtr<ChannelManager> no_manager;
+    DataStream ds(no_manager, /*ingress*/ 0, 1200, 1024, /*verify_crc*/ true);
+    CaptureHandler handler;
+    ds.setUnknownSessionCallback([&](zce_uint32, zce_uint32) -> ISessionHandler* { return &handler; });
+
+    MockChannel a(0x1001), b(0x1002), c(0x1003), d(0x1004);
+    a.setPeerIdentity(/*peer_channel*/ 1, 0, 0);  // incumbent primary
+    b.setPeerIdentity(2, 0, 0);                    // consistently fastest probe
+    c.setPeerIdentity(3, 0, 0);
+    d.setPeerIdentity(4, 0, 0);
+
+    zce_uint32 seq = 0;
+    for (int round = 0; round < 5; ++round) {
+        race(ds, b, a, seq++);   // B beats the primary A
+        race(ds, a, c, seq++);   // A beats C
+        race(ds, a, d, seq++);   // A beats D
+    }
+    // A: wins 10 / races 15 = 0.67; B: wins 5 / races 5 = 1.0. Raw-count would
+    // pick A (10 > 5) and never converge; win-rate picks B.
+    EXPECT_EQ(ds.recommendedPrimary(), 2u);
+}
+
+// A peer restart (new Hello generation) resets the epoch comparison so the
+// restarted peer's low epochs are accepted instead of discarded forever.
+TEST(FgwDataStreamTest, PeerRestartResetsEpoch) {
+    zce::SmartPtr<zce::Reactor> reactor(zce::ReactorSigt::instance());
+    zce::SmartPtr<ChannelManager> mgr(new ChannelManager(reactor, nullptr));
+    DataStream ds(mgr, /*ingress*/ 0, 1200, 1024, /*verify_crc*/ true);
+    MockChannel ch(1);
+
+    auto h1 = makeHello(/*gen*/ 100, /*channel_id*/ 5);
+    ds.onChannelBytes(&ch, h1.data(), (zce_uint32)h1.size());
+    auto f10 = makeFeedback(/*epoch*/ 10, /*primary*/ 42);
+    ds.onChannelBytes(&ch, f10.data(), (zce_uint32)f10.size());
+    EXPECT_EQ(mgr->selector().primaryChannel(), 42u);
+
+    // Peer restarts: new generation, epoch sequence starts over at 1.
+    auto h2 = makeHello(200, 6);
+    ds.onChannelBytes(&ch, h2.data(), (zce_uint32)h2.size());
+    auto f1 = makeFeedback(1, 7);
+    ds.onChannelBytes(&ch, f1.data(), (zce_uint32)f1.size());
+    EXPECT_EQ(mgr->selector().primaryChannel(), 7u);  // low epoch applied after restart
+}
+
 // Inbound racing feedback sets the LinkSelector primary, and a stale (older or
 // equal) epoch is ignored.
 TEST(FgwDataStreamTest, AppliesRacingFeedbackByEpoch) {
