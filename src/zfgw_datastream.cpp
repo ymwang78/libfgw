@@ -242,6 +242,27 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
             pos += (size_t)total;
             continue;
         }
+        // Receive-window guard, evaluated BEFORE the dedup key is recorded: an
+        // out-of-window segment must not poison the dedup table. If it did, a
+        // later multipath copy of that seq — arriving once the window has
+        // advanced to cover it — would be rejected as a duplicate and stall the
+        // session forever, defeating the redundancy dual-send exists to provide.
+        // The unsigned (seq - expected) delta folds "too old" (already
+        // delivered/deduped) and "too far ahead" into one bound, so rx_buffer
+        // stays capped at recv_window under loss, reordering, or a hostile peer.
+        if (hdr.isData() && hdr.payload_len > 0) {
+            auto sit = sessions_.find(skey);
+            const zce_uint32 expected =
+                (sit == sessions_.end()) ? 0 : sit->second.expected_rx_seq;
+            const zce_uint32 rel = hdr.seq_num - expected;
+            if (rel >= recv_window_) {
+                ZCE_ERROR((ZLOG_WARNI,
+                           "fgw: session %u seq %u outside recv window [%u,+%u), dropped",
+                           hdr.session_id, hdr.seq_num, expected, (unsigned)recv_window_));
+                pos += (size_t)total;
+                continue;
+            }
+        }
         dedup_map_[dk] = true;
         dedup_queue_.push_back(dk);
         if (dedup_queue_.size() > kDedupRing) {
@@ -300,16 +321,14 @@ void DataStream::onChannelBytes(IFgwChannel* ch, const zce_byte* buf, zce_uint32
                 it = sessions_.find(skey);
             }
             {
+                // Already validated against the receive window above (before the
+                // dedup key was recorded), so rx_buffer stays bounded by it.
                 zce::RefBlock payload;
                 ZCE_MBACQUIRE(payload, (int)hdr.payload_len);
                 if ((int)payload.space() >= (int)hdr.payload_len) {
                     std::memcpy(payload.wr_ptr_cow(), frame + hr, hdr.payload_len);
                     payload.wr_ptr(hdr.payload_len);
                     it->second.rx_buffer.emplace(hdr.seq_num, std::move(payload));
-                }
-                if (it->second.rx_buffer.size() > recv_window_) {
-                    ZCE_ERROR((ZLOG_WARNI, "fgw: session %u rx window overflow",
-                               hdr.session_id));
                 }
                 deliverInOrder(it->second);
             }
