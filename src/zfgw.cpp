@@ -46,13 +46,18 @@ int zfgw_save_config(const zfgw::FgwConfig& config, const std::string& host_dir,
                      const std::string& vmname, const std::string& vmpath) {
     std::string path = zfgw::fgwConfigFilePath(host_dir, vmname, vmpath);
 
-    int need = zce::zdp::zds_pack(nullptr, 0, config, nullptr, true);
+    // Stamp the schema version here — the single choke point for persisting a
+    // config — so no caller can write a file a future loader would misread.
+    zfgw::FgwConfig stamped = config;
+    stamped.config_version = zfgw::kFgwConfigVersion;
+
+    int need = zce::zdp::zds_pack(nullptr, 0, stamped, nullptr, true);
     if (need < 0) return need;
 
     zce::RefBlock dblock;
     ZCE_MBACQUIRE(dblock, need);
     if ((int)dblock.space() < need) return ZFGW_ERRCODE_MEMORY;
-    int wrote = zce::zdp::zds_pack(dblock.wr_ptr_cow(), (int)dblock.space(), config,
+    int wrote = zce::zdp::zds_pack(dblock.wr_ptr_cow(), (int)dblock.space(), stamped,
                                    nullptr, true);
     if (wrote < 0) return wrote;
     dblock.wr_ptr(wrote);
@@ -89,9 +94,25 @@ int zfgw_load_config(zfgw::FgwConfig& config, const std::string& host_dir,
     if (n != (size_t)len) return ZFGW_ERRCODE_PATHFILEREAD;
     dblock.wr_ptr((int)n);
 
-    int consumed = zce::zdp::zds_unpack(config, dblock.rd_ptr(), (int)dblock.length(),
+    zfgw::FgwConfig decoded;
+    int consumed = zce::zdp::zds_unpack(decoded, dblock.rd_ptr(), (int)dblock.length(),
                                         nullptr, true);
-    return consumed < 0 ? consumed : 0;
+    if (consumed < 0) return consumed;
+
+    // Reject a file written under a different field numbering. A pre-v0.3.0
+    // config carries no version (0) and its bits 5+ denote other fields — some
+    // of which share a type with what sits there now, so it would decode
+    // "successfully" with silently shifted values. Refuse instead of guessing.
+    if (!zfgw::fgwConfigVersionOk(decoded.config_version)) {
+        ZCE_ERROR((ZLOG_ERROR,
+                   "fgw: %s has config_version 0x%08X, expected 0x%08X — "
+                   "incompatible layout, regenerate the config",
+                   path.c_str(), decoded.config_version, zfgw::kFgwConfigVersion));
+        return ZFGW_ERRCODE_INVALIDCONFIG;
+    }
+
+    config = std::move(decoded);
+    return 0;
 }
 
 // ─── VM registration ────────────────────────────────────────────────────────

@@ -88,7 +88,7 @@ int ZfgwMachine::doBringup() {
             return ret;
         }
     } else if (config_.role == ZFGW_ROLE_OUTPORT) {
-        outport_ = new OutportService(reactor, stream_, config_.egress_bind_ip);
+        outport_ = new OutportService(reactor, stream_);
         ret = outport_->start();
         if (ret < 0) {
             doTeardown();
@@ -211,6 +211,18 @@ int ZfgwMachine::mlfStop(FgwEmpty /*req*/, const response_cb& resp) {
 }
 
 int ZfgwMachine::mlfSetConfig(FgwSetConfigRequest req, const response_cb& resp) {
+    // Same guard as the on-disk loader: a caller built against an older layout
+    // would land its values on the wrong fields, so require the schema stamp
+    // rather than persisting a config we may be misreading.
+    if (!fgwConfigVersionOk(req.config.config_version)) {
+        ZCE_ERROR((ZLOG_WARNI,
+                   "ZfgwMachine '%s': rejecting config with version 0x%08X (expected 0x%08X)",
+                   vm_name_.c_str(), req.config.config_version, kFgwConfigVersion));
+        FgwStartResult bad;
+        bad.errcode = ZFGW_ERRCODE_INVALIDCONFIG;
+        bad.message = "incompatible config_version";
+        return sendResponse(resp, bad);
+    }
     {
         zce::Guard<zce::Mutex> g(lock_);
         config_ = req.config;

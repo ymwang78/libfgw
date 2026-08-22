@@ -152,16 +152,16 @@ int zce::zdp::zds_pack(zce_byte* buf, int size, const zfgw::FgwConfig& _t, zds_c
     if (!zdp::is_empty_member(_t.inport_listen_port)) _struct_prefix |= 1ull << 2; 
     if (!zdp::is_empty_member(_t.outport_listen_host)) _struct_prefix |= 1ull << 3; 
     if (!zdp::is_empty_member(_t.outport_listen_port)) _struct_prefix |= 1ull << 4; 
-    if (!zdp::is_empty_member(_t.egress_bind_ip)) _struct_prefix |= 1ull << 5; 
-    if (!_t.channels.empty()) _struct_prefix |= 1ull << 6; 
-    if (!zdp::is_empty_member(_t.segment_size)) _struct_prefix |= 1ull << 7; 
-    if (!zdp::is_empty_member(_t.recv_window)) _struct_prefix |= 1ull << 8; 
-    if (!zdp::is_empty_member(_t.heartbeat_interval)) _struct_prefix |= 1ull << 9; 
-    if (!zdp::is_empty_member(_t.link_timeout)) _struct_prefix |= 1ull << 10; 
-    if (!zdp::is_empty_member(_t.reconnect_max)) _struct_prefix |= 1ull << 11; 
-    if (!zdp::is_empty_member(_t.multipath_mode)) _struct_prefix |= 1ull << 12; 
-    if (!zdp::is_empty_member(_t.enable_crc)) _struct_prefix |= 1ull << 13; 
-    if (!zdp::is_empty_member(_t.route_outport_id)) _struct_prefix |= 1ull << 14; 
+    if (!_t.channels.empty()) _struct_prefix |= 1ull << 5; 
+    if (!zdp::is_empty_member(_t.segment_size)) _struct_prefix |= 1ull << 6; 
+    if (!zdp::is_empty_member(_t.recv_window)) _struct_prefix |= 1ull << 7; 
+    if (!zdp::is_empty_member(_t.heartbeat_interval)) _struct_prefix |= 1ull << 8; 
+    if (!zdp::is_empty_member(_t.link_timeout)) _struct_prefix |= 1ull << 9; 
+    if (!zdp::is_empty_member(_t.reconnect_max)) _struct_prefix |= 1ull << 10; 
+    if (!zdp::is_empty_member(_t.multipath_mode)) _struct_prefix |= 1ull << 11; 
+    if (!zdp::is_empty_member(_t.enable_crc)) _struct_prefix |= 1ull << 12; 
+    if (!zdp::is_empty_member(_t.route_outport_id)) _struct_prefix |= 1ull << 13; 
+    if (!zdp::is_empty_member(_t.config_version)) _struct_prefix |= 1ull << 14; 
     len = zds_pack_struct_header(buf, size, _struct_prefix, ctx, has_prefix);
     CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
@@ -191,51 +191,51 @@ int zce::zdp::zds_pack(zce_byte* buf, int size, const zfgw::FgwConfig& _t, zds_c
 
     };
     if (_struct_prefix & (1ull << 5)) {
-        len = zds_pack_builtin(buf, size,  _t.egress_bind_ip, ctx);
-        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
-
-    };
-    if (_struct_prefix & (1ull << 6)) {
         len = zds_pack_array(buf, size, _t.channels, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     };
-    if (_struct_prefix & (1ull << 7)) {
+    if (_struct_prefix & (1ull << 6)) {
         len = zds_pack_builtin(buf, size,  _t.segment_size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
-    if (_struct_prefix & (1ull << 8)) {
+    if (_struct_prefix & (1ull << 7)) {
         len = zds_pack_builtin(buf, size,  _t.recv_window, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
-    if (_struct_prefix & (1ull << 9)) {
+    if (_struct_prefix & (1ull << 8)) {
         len = zds_pack_builtin(buf, size,  _t.heartbeat_interval, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
-    if (_struct_prefix & (1ull << 10)) {
+    if (_struct_prefix & (1ull << 9)) {
         len = zds_pack_builtin(buf, size,  _t.link_timeout, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
-    if (_struct_prefix & (1ull << 11)) {
+    if (_struct_prefix & (1ull << 10)) {
         len = zds_pack_builtin(buf, size,  _t.reconnect_max, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
-    if (_struct_prefix & (1ull << 12)) {
+    if (_struct_prefix & (1ull << 11)) {
         len = zds_pack_builtin(buf, size,  _t.multipath_mode, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
-    if (_struct_prefix & (1ull << 13)) {
+    if (_struct_prefix & (1ull << 12)) {
         len = zds_pack_builtin(buf, size,  _t.enable_crc, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
-    if (_struct_prefix & (1ull << 14)) {
+    if (_struct_prefix & (1ull << 13)) {
         len = zds_pack_builtin(buf, size,  _t.route_outport_id, ctx);
+        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
+
+    };
+    if (_struct_prefix & (1ull << 14)) {
+        len = zds_pack_builtin(buf, size,  _t.config_version, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
 
     };
@@ -280,64 +280,64 @@ int zce::zdp::zds_unpack(zfgw::FgwConfig& _t, const zce_byte* buf, int size, zds
         _t.outport_listen_port = {};
     };
     if (_struct_prefix & (1ull << 5)) {
-        len = zds_unpack_builtin(_t.egress_bind_ip, buf, size, ctx);
-        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
-    } else {
-        _t.egress_bind_ip = {};
-    };
-    if (_struct_prefix & (1ull << 6)) {
         len = zds_unpack_array(_t.channels, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.channels = {};
     };
-    if (_struct_prefix & (1ull << 7)) {
+    if (_struct_prefix & (1ull << 6)) {
         len = zds_unpack_builtin(_t.segment_size, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.segment_size = {};
     };
-    if (_struct_prefix & (1ull << 8)) {
+    if (_struct_prefix & (1ull << 7)) {
         len = zds_unpack_builtin(_t.recv_window, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.recv_window = {};
     };
-    if (_struct_prefix & (1ull << 9)) {
+    if (_struct_prefix & (1ull << 8)) {
         len = zds_unpack_builtin(_t.heartbeat_interval, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.heartbeat_interval = {};
     };
-    if (_struct_prefix & (1ull << 10)) {
+    if (_struct_prefix & (1ull << 9)) {
         len = zds_unpack_builtin(_t.link_timeout, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.link_timeout = {};
     };
-    if (_struct_prefix & (1ull << 11)) {
+    if (_struct_prefix & (1ull << 10)) {
         len = zds_unpack_builtin(_t.reconnect_max, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.reconnect_max = {};
     };
-    if (_struct_prefix & (1ull << 12)) {
+    if (_struct_prefix & (1ull << 11)) {
         len = zds_unpack_builtin(_t.multipath_mode, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.multipath_mode = {};
     };
-    if (_struct_prefix & (1ull << 13)) {
+    if (_struct_prefix & (1ull << 12)) {
         len = zds_unpack_builtin(_t.enable_crc, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.enable_crc = {};
     };
-    if (_struct_prefix & (1ull << 14)) {
+    if (_struct_prefix & (1ull << 13)) {
         len = zds_unpack_builtin(_t.route_outport_id, buf, size, ctx);
         CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
     } else {
         _t.route_outport_id = {};
+    };
+    if (_struct_prefix & (1ull << 14)) {
+        len = zds_unpack_builtin(_t.config_version, buf, size, ctx);
+        CHECKLEN_MOVEBUF_ADDRET_DECSIZE;
+    } else {
+        _t.config_version = {};
     };
     _struct_prefix >>= 15;
     while (_struct_prefix != 0) {

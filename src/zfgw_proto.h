@@ -55,7 +55,6 @@ namespace zfgw
             if (inport_listen_port != _t.inport_listen_port) return false;
             if (outport_listen_host != _t.outport_listen_host) return false;
             if (outport_listen_port != _t.outport_listen_port) return false;
-            if (egress_bind_ip != _t.egress_bind_ip) return false;
             if (!(channels == _t.channels)) return false;
             if (segment_size != _t.segment_size) return false;
             if (recv_window != _t.recv_window) return false;
@@ -65,6 +64,7 @@ namespace zfgw
             if (multipath_mode != _t.multipath_mode) return false;
             if (enable_crc != _t.enable_crc) return false;
             if (route_outport_id != _t.route_outport_id) return false;
+            if (config_version != _t.config_version) return false;
             return true;
         }
 
@@ -73,7 +73,6 @@ namespace zfgw
         zce_uint16    inport_listen_port = 1080/* SOCKS5 local listen port on Inport */;
         zce_astring    outport_listen_host/* listen ip for Outport side */;
         zce_uint16    outport_listen_port = 0/* listen port for Outport side */;
-        zce_astring    egress_bind_ip/* fixed egress ip on Outport side */;
         std::vector<zfgw::FgwChannelConfig> channels/* pre-configured channels */;
         zce_uint16    segment_size = 1200/* payload size per segment */;
         zce_uint16    recv_window = 1024/* receive window size (segments) */;
@@ -83,6 +82,7 @@ namespace zfgw
         zce_byte    multipath_mode = 2/* 0 = best, 1 = all, 2 = weighted */;
         zce_byte    enable_crc = 1/* bool */;
         zce_uint32    route_outport_id = 0;
+        zce_uint32    config_version = 0;
     };
     struct FgwLinkQuality
     {

@@ -5,8 +5,10 @@
 //  DataStream from a peer Inport.  Every session is expected to carry
 //  a standard SOCKS5 handshake followed by the actual payload; the
 //  Outport speaks SOCKS5 itself and, on successful negotiation, dials
-//  out to the requested target using a zce::Tcp pinned to the
-//  operator-configured egress IP ("fixed egress").
+//  out to the requested target with a zce::Tcp.  Egress stability comes
+//  from session affinity — a session is pinned to one Outport for its
+//  lifetime — while the source address itself is chosen by the host's
+//  routing table.
 //
 //  Yongming Wang(wangym@gmail.com)
 //  Copyright (C) 2026 - All Rights Reserved
@@ -83,8 +85,7 @@ using FgwRelaySessionPtr = zce::SmartPtr<FgwRelaySession>;
 /// OutportService — owns the DataStream's server side + its per-session relays.
 class OutportService : public zce::Object {
   public:
-    OutportService(const zce::SmartPtr<zce::Reactor>& reactor, const DataStreamPtr& stream,
-                   const std::string& egress_bind_ip);
+    OutportService(const zce::SmartPtr<zce::Reactor>& reactor, const DataStreamPtr& stream);
     ~OutportService() override;
 
     int start();
@@ -100,7 +101,6 @@ class OutportService : public zce::Object {
     std::vector<FgwRelaySessionPtr> snapshotSessions() const;
 
     const zce::SmartPtr<zce::Reactor>& reactor() const { return reactor_; }
-    const std::string& egressIp() const { return egress_bind_ip_; }
     const DataStreamPtr& dataStream() const { return stream_; }
 
     /// Called by the server-side channels (accepted by a listener or
@@ -119,7 +119,6 @@ class OutportService : public zce::Object {
   private:
     zce::SmartPtr<zce::Reactor>                 reactor_;
     DataStreamPtr                               stream_;
-    std::string                                 egress_bind_ip_;
     mutable zce::Mutex                          lock_;
     std::map<RelaySessionKey, FgwRelaySessionPtr> sessions_;
 };

@@ -9,6 +9,7 @@
 // ***************************************************************
 #include "zfgw_proto.h"
 #include "zfgw_pack.h"
+#include "zfgw.h"
 
 #include <gtest/gtest.h>
 #include <vector>
@@ -66,7 +67,8 @@ TEST(FgwPackTest, FgwConfigWithChannels) {
     src.role               = 0;
     src.ingress_id         = 42;
     src.inport_listen_port = 1080;
-    src.egress_bind_ip     = "192.168.1.10";
+    src.route_outport_id   = 7;
+    src.config_version     = kFgwConfigVersion;
     src.segment_size       = 1400;
     src.recv_window        = 2048;
     src.heartbeat_interval = 3;
@@ -129,6 +131,31 @@ TEST(FgwPackTest, StatusAggregates) {
     int consumed = zce::zdp::zds_unpack(out, bytes.data(), (int)bytes.size(), nullptr, true);
     ASSERT_GT(consumed, 0);
     EXPECT_TRUE(out == src);
+}
+
+// The schema guard: only the current stamp is accepted. 0 means the field was
+// absent — a pre-v0.3.0 file, whose bits 5+ denote different fields (several of
+// the same type), so decoding it further would silently shift values.
+TEST(FgwPackTest, ConfigVersionGuard) {
+    EXPECT_TRUE(fgwConfigVersionOk(kFgwConfigVersion));
+    EXPECT_FALSE(fgwConfigVersionOk(0));            // legacy / field absent
+    EXPECT_FALSE(fgwConfigVersionOk(1));            // a legacy route_outport_id
+    EXPECT_FALSE(fgwConfigVersionOk(0xF6C00002u));  // older schema revision
+
+    // A default-constructed config is not accepted until a writer stamps it.
+    FgwConfig fresh;
+    EXPECT_FALSE(fgwConfigVersionOk(fresh.config_version));
+
+    // The stamp survives a pack/unpack round-trip.
+    FgwConfig src;
+    src.role           = 1;
+    src.config_version = kFgwConfigVersion;
+    std::vector<zce_byte> buf(512);
+    int wrote = zce::zdp::zds_pack(buf.data(), (int)buf.size(), src, nullptr, true);
+    ASSERT_GT(wrote, 0);
+    FgwConfig out;
+    ASSERT_GT(zce::zdp::zds_unpack(out, buf.data(), wrote, nullptr, true), 0);
+    EXPECT_TRUE(fgwConfigVersionOk(out.config_version));
 }
 
 }  // namespace

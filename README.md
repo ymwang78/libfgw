@@ -9,7 +9,7 @@ HostVM 调度，通过 RPC 暴露控制面，通过普通 socket 提供数据面
 
 - **双端角色**
   - **Inport**：本地入口，监听 TCP 127.0.0.1:1080，接受任意 SOCKS5 客户端。
-  - **Outport**：远端出口，终结 SOCKS5 协议并以固定 egress IP 主动外联。
+  - **Outport**：远端出口，终结 SOCKS5 协议并向目标主动外联；出口稳定性来自会话粘性（会话终生固定在同一 Outport）。
 - **多链路聚合 DataStream**：UTP + TCP 任意组合，支持：
   - 加权最短路径的链路选择（RTT / 丢包 / 优先级）。
   - 重复包去重（按 `session_id + seq_num`）与接收窗口重排序。
@@ -57,7 +57,7 @@ Inport / FgwSession  ── raw bytes ──┐
                  FgwRelaySession（SOCKS5 server + zce::Connector）
                                     │
                                 Internet
-                                    │ （固定 egress IP）
+                                    │ （宿主路由 / 会话粘性固定出口）
                                     ▼
                                 Target Host
 ```
@@ -67,7 +67,7 @@ Inport / FgwSession  ── raw bytes ──┐
 ```text
 role               = 0 (Inport) | 1 (Outport)
 inport_listen_port = 1080
-egress_bind_ip     = "1.2.3.4"          // Outport 固定出口
+route_outport_id   = 0                  // Inport: 0=直连，非0=经 Transit 转发到该出口
 segment_size       = 1200
 recv_window        = 1024
 heartbeat_interval = 5                  // seconds
@@ -120,9 +120,9 @@ HostVM 启动后会通过 `VirtualMachineRegister` 查找 `"fgw"` 类型虚拟�
 - `FgwUtpChannel` 目前为桩实现，开启 `FGW_USE_LIBUTP` 后需要补齐 `utp_init` /
   `utp_create_socket` / `utp_connect` / `utp_issue_deferred_acks` 的完整
   调用链。
-- `egress_bind_ip` 在 `zfgw_outport.cpp` 内对应的 `zce::Tcp` 绑定逻辑当前依赖
-  宿主 `uv_tcp_bind` — 需要在 `libzce` 中暴露 bind 接口或使用 `zce::Acceptor`
-  的反向绑定能力。
+- 出口源 IP **不由本库绑定**：`egress_bind_ip` 已移除。出口稳定性来自会话粘性
+  （一个会话终生固定在同一个 Outport），源地址由宿主机路由表决定；需要在多个
+  本机 IP 间选择的场景请用策略路由。
 - Outport listening（被动接收来自 Inport 的 UTP/TCP 链路）尚未在
   `InportService` / `OutportService` 中提供自动对称构建，目前由
   `FgwConfig.channels` 主动 dial。

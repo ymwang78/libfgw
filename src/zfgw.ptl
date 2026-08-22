@@ -13,6 +13,14 @@
     /*  written pack appended `ingress_id` at the LAST bit; zgen places   */
     /*  it by declaration order (bit 1). FgwConfig's persisted config.zds */
     /*  is thus NOT compatible with the pre-zgen format — regenerate.     */
+    /*                                                                    */
+    /*  NOTE: v0.3.0 REMOVED FgwConfig.egress_bind_ip (was bit 5). It was */
+    /*  accepted but never applied — source-IP selection belongs to the   */
+    /*  host routing table, and egress stability already comes from       */
+    /*  session affinity (a session is pinned to one Outport). This is a  */
+    /*  deliberate, one-off break of the append-only rule: every field    */
+    /*  after it shifts down one bit, so any config.zds written before    */
+    /*  v0.3.0 MUST be regenerated. Do not take it as precedent.          */
     /* ================================================================== */
 
     /* ------------------------------------------------------------------ */
@@ -41,7 +49,6 @@
         uint16  inport_listen_port = 1080     /* SOCKS5 local listen port on Inport */;
         astring outport_listen_host           /* listen ip for Outport side */;
         uint16  outport_listen_port = 0       /* listen port for Outport side */;
-        astring egress_bind_ip                /* fixed egress ip on Outport side */;
         struct FgwChannelConfig channels[~]   /* pre-configured channels */;
         uint16  segment_size = 1200           /* payload size per segment */;
         uint16  recv_window = 1024            /* receive window size (segments) */;
@@ -54,6 +61,11 @@
            Transit can fan out to the right Outport. 0 = direct (no routing,
            emit Extended headers). Appended at end to keep the ZDS layout stable. */
         uint32  route_outport_id = 0;
+        /* Schema guard. Writers stamp kFgwConfigVersion; a loader that reads
+           anything else (including 0 = field absent, i.e. any pre-v0.3.0 file)
+           rejects the config instead of decoding it under the wrong field
+           numbering. Default MUST stay 0 so "absent" stays distinguishable. */
+        uint32  config_version = 0;
     };
 
     /* ------------------------------------------------------------------ */

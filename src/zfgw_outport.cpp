@@ -282,10 +282,11 @@ void FgwRelaySession::startConnect(const std::string& host, zce_uint16 port) {
         writeReply(SOCKS5_REP_HOSTUNREACH);
         close();
     }
-    // Fixed-egress bind (egress_bind_ip) requires a libuv-level
-    // uv_tcp_bind call before uv_tcp_connect which the current
-    // zce::Tcp API does not yet expose.  The intended contract is
-    // documented in libfgw/docs/design_fgw.md §3.2.2.
+    // The source IP of this outbound connection is chosen by the host's
+    // routing table. Egress stability is a property of session affinity — a
+    // session is pinned to one Outport for its lifetime — not of binding a
+    // local address here; operators that must pick among several local IPs
+    // do so with policy routing.
 }
 
 void FgwRelaySession::sendToPeer(const zce_byte* buf, zce_uint32 len) {
@@ -294,9 +295,8 @@ void FgwRelaySession::sendToPeer(const zce_byte* buf, zce_uint32 len) {
 
 // ─── OutportService ──────────────────────────────────────────────────────────
 OutportService::OutportService(const zce::SmartPtr<zce::Reactor>& reactor,
-                               const DataStreamPtr& stream,
-                               const std::string& egress_bind_ip)
-    : reactor_(reactor), stream_(stream), egress_bind_ip_(egress_bind_ip) {}
+                               const DataStreamPtr& stream)
+    : reactor_(reactor), stream_(stream) {}
 
 OutportService::~OutportService() {
     stop();
