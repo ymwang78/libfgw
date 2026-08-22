@@ -20,9 +20,14 @@ HostVM 调度，通过 RPC 暴露控制面，通过普通 socket 提供数据面
     与接收窗口重排序；窗外段直接丢弃，`rx_buffer` 受 `recv_window` 硬限。
   - CRC32 分段完整性校验，包头三种宽度：16（Legacy）/ 20（含 `ingress_id`）/
     24 字节（Routed，含 `outport_id`）。
-- **抗干扰链路自愈**：逐链路心跳 + 卡死探活（TCP 仍连着但静默时判定 stalled 并
-  移出选路）、指数退避重连；接收端按**到达顺序竞速**统计各链路胜率，经
-  `FgwLinkFeedback`（ACK + 单调 epoch）反馈给发送端切换主用链路。
+- **抗干扰链路自愈**（Inport ↔ Outport 直连链路）：逐链路心跳 + 卡死探活
+  （TCP 仍连着但静默时判定 stalled 并移出选路）、指数退避重连；接收端按
+  **到达顺序竞速**统计各链路胜率，经 `FgwLinkFeedback`（ACK + 单调 epoch）
+  反馈给发送端切换主用链路。
+  > ⚠ **经 Transit 中转时该反馈环当前不闭合**：Transit 把 ACK 视为逐跳控制段就地
+  > 消费、不转发，而它自己尚未做竞速裁决，因此 Outport 产生的反馈到不了 Inport；
+  > 此时 Inport 按本地权重选主用。Transit 也不做卡死判定（只发心跳），
+  > 被静默黑洞但 TCP 仍连着的中转链路不会被摘除。见"已知待办"。
 - **配置持久化**：FgwConfig 通过 ZDS 序列化到 VM 目录下的 `config.zds`，
   并带 `config_version` 模式校验，拒绝按旧字段编号写出的配置。
 - **HostVM 集成**：`ZfgwMachine` 继承 `zce::zvm::Machine`，
@@ -87,8 +92,12 @@ segment_size       = 1200
 recv_window        = 1024               // 接收窗口（段数），同时是 rx_buffer 上限
 heartbeat_interval = 5                  // seconds
 link_timeout       = 15                 // seconds，超时无收包即判定链路 stalled
+                                        // ⚠ 仅 Inport / Outport 生效（走 ChannelManager）；
+                                        //   Transit 目前只发心跳，不做卡死判定
 multipath_mode     = 0 best | 1 all | 2 探索/利用双发（默认）
-config_version                          // 由 zfgw_save_config 自动盖戳，勿手填
+config_version                          // 落盘时由 zfgw_save_config 自动盖戳；
+                                        // ⚠ 走 mlfSetConfig RPC 时必须由调用方显式填入
+                                        //   kFgwConfigVersion，否则请求会被判为版本不符而拒绝
 channels           = [
     { channel_id: 1, kind: 0 (TCP), remote: a.example:5001, priority: 100 },
     { channel_id: 2, kind: 1 (UTP), remote: b.example:5002, priority: 80 },
@@ -150,7 +159,11 @@ HostVM 启动后会通过 `VirtualMachineRegister` 查找 `"fgw"` 类型虚拟�
 - **发送端流控与重传**：接收窗口目前只做上限保护（窗外段丢弃），既没有向对端
   施加背压（`WINDOW_FULL`），也不重传窗内缺口——缺口会让该会话停住。
   `FgwLinkFeedback.highest_seq` / `alive_bitmap` 已为此预留。
-- **Transit 侧竞速裁决**：三层拓扑中被审查的是 Inport→Transit 这一跳，Transit 是
-  该跳的接收方，但目前只转发、不裁决，竞速反馈仍由端到端的 Outport 产生。
+- **Transit 侧竞速裁决与卡死探活**：三层拓扑中被审查的是 Inport→Transit 这一跳，
+  Transit 是该跳的接收方，但目前只转发、不裁决；而它又把 ACK 当逐跳控制段消费掉，
+  于是**经中转时整条反馈环断开**（Outport 的反馈到不了 Inport，Inport 退化为按本地
+  权重选主用）。Transit 的 `onHeartbeatTick` 也只发心跳、不调 `evaluateStall`，
+  被黑洞但 TCP 仍连着的中转链路不会被判 stalled。两者应一并补齐：让 Transit 对
+  Inport→Transit 跳做裁决并向 Inport 发反馈，同时接入卡死判定。
 - **大流量下的探路开销**：当前每段都双发（2x）。大流量场景可改为采样式探路
   （每 N 段探一次）把开销压回接近 1x。
