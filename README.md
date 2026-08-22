@@ -9,7 +9,7 @@ HostVM 调度，通过 RPC 暴露控制面，通过普通 socket 提供数据面
 
 - **双端角色**
   - **Inport**：本地入口，监听 TCP 127.0.0.1:1080，接受任意 SOCKS5 客户端。
-  - **Outport**：远端出口，终结 SOCKS5 协议并以固定 egress IP 主动外联。
+  - **Outport**：远端出口，终结 SOCKS5 协议并向目标主动外联；出口稳定性来自会话粘性（会话终生固定在同一 Outport）。
 - **多链路聚合 DataStream**：UTP + TCP 任意组合，支持：
   - 加权最短路径的链路选择（RTT / 丢包 / 优先级）。
   - 重复包去重（按 `session_id + seq_num`）与接收窗口重排序。
@@ -57,7 +57,7 @@ Inport / FgwSession  ── raw bytes ──┐
                  FgwRelaySession（SOCKS5 server + zce::Connector）
                                     │
                                 Internet
-                                    │ （固定 egress IP）
+                                    │ （宿主路由 / 会话粘性固定出口）
                                     ▼
                                 Target Host
 ```
